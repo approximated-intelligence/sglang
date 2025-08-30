@@ -29,6 +29,8 @@ from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import is_blackwell, kill_process_tree
 from sglang.test.test_utils import is_in_ci, write_github_step_summary
 
+DATASET_PATH = ""
+
 
 @dataclasses.dataclass
 class BenchArgs:
@@ -40,6 +42,7 @@ class BenchArgs:
     return_logprob: bool = False
     client_stream_interval: int = 1
     input_len_step_percentage: float = 0.0
+    dataset_path: str = ""
     result_filename: str = "result.jsonl"
     base_url: str = ""
     skip_warmup: bool = False
@@ -72,6 +75,7 @@ class BenchArgs:
             type=float,
             default=BenchArgs.input_len_step_percentage,
         )
+        parser.add_argument("--dataset-path", type=str, default=BenchArgs.dataset_path)
         parser.add_argument(
             "--result-filename", type=str, default=BenchArgs.result_filename
         )
@@ -146,7 +150,7 @@ def run_one_case(
         num_prompts=batch_size,
         range_ratio=1.0,
         tokenizer=tokenizer,
-        dataset_path="",
+        dataset_path=DATASET_PATH,
         random_sample=True,
         return_text=False,
     )
@@ -422,6 +426,10 @@ def main():
     args = parser.parse_args()
     server_args = ServerArgs.from_cli_args(args)
     bench_args = BenchArgs.from_cli_args(args)
+
+    global DATASET_PATH
+    if bench_args.dataset_path is not None:
+        DATASET_PATH = bench_args.dataset_path
 
     run_benchmark(server_args, bench_args)
 
