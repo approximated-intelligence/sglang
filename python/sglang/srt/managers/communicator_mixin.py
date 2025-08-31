@@ -84,12 +84,6 @@ class _Communicator(Generic[T]):
         if len(self._result_values) == self._fan_out:
             self._result_event.set()
 
-    async def _execute_profile(self, req: ProfileReq):
-        result = (await self.profile_communicator(req))[0]
-        if not result.success:
-            raise RuntimeError(result.message)
-        return result
-
 
 class CommunicatorMixin:
     def init_communicators(self, send_to_scheduler_socket, server_args: ServerArgs):
@@ -135,6 +129,7 @@ class CommunicatorMixin:
         self.get_load_communicator = _Communicator(
             send_to_scheduler_socket, server_args.dp_size
         )
+
         self._communicator_dispatcher = TypeBasedDispatcher(
             [
                 (
