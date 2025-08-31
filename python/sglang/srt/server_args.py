@@ -531,6 +531,10 @@ class ServerArgs:
             self.grammar_backend = "xgrammar"
 
         # Data parallelism attention
+        if self.dp_size == 1:
+            self.enable_dp_attention = False
+            self.enable_dp_lm_head = False
+
         if self.enable_dp_attention:
             self.schedule_conservativeness = self.schedule_conservativeness * 0.3
             assert (
