@@ -475,7 +475,7 @@ class TypeBasedDispatcher:
         self._mapping = mapping
 
     def __add__(self, other: "TypeBasedDispatcher"):
-        mapping = {**self._mapping, **other._mapping}
+        mapping = self._mapping + other._mapping
         return TypeBasedDispatcher(mapping)
 
     def __call__(self, obj: Any):
