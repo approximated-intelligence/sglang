@@ -7,6 +7,7 @@ import torch
 
 from sglang.srt.disaggregation.kv_events import EventPublisherFactory, KVEventBatch
 from sglang.srt.disaggregation.utils import DisaggregationMode
+from sglang.srt.managers.io_struct import TokenizedGenerateReqInput
 from sglang.srt.managers.schedule_policy import PrefillAdder
 from sglang.srt.managers.scheduler import Req, ScheduleBatch
 from sglang.srt.managers.utils import DPBalanceMeta
@@ -344,7 +345,7 @@ class SchedulerMetricsMixin:
                 new_recv_dp_balance_id_list, holding_token_list
             )
 
-    def maybe_update_dp_balance_info(self, recv_req: Req):
+    def maybe_update_dp_balance_info(self, recv_req: TokenizedGenerateReqInput):
         if (
             self.server_args.enable_dp_attention
             and self.server_args.load_balance_method == "minimum_tokens"

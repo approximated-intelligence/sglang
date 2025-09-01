@@ -286,7 +286,7 @@ class DataParallelController:
     def shortest_queue_scheduler(self, input_requests):
         raise NotImplementedError()
 
-    def minimum_tokens_scheduler(self, req):
+    def minimum_tokens_scheduler(self, req: TokenizedGenerateReqInput):
         # This variable corresponds to the balance_id in TokenizedGenerateReqInput.
         # We use it to to control the number of onfly tokens (requests dispatched to workers but not yet received).
         def get_next_global_balance_id() -> int:
