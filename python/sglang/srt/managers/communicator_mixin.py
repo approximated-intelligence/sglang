@@ -14,6 +14,8 @@ from sglang.srt.managers.io_struct import (
     FlushCacheReqOutput,
     GetInternalStateReq,
     GetInternalStateReqOutput,
+    GetLoadReq,
+    GetLoadReqOutput,
     GetWeightsByNameReqInput,
     GetWeightsByNameReqOutput,
     InitWeightsUpdateGroupReqInput,
@@ -120,13 +122,13 @@ class CommunicatorMixin:
         self.set_internal_state_communicator = _Communicator(
             send_to_scheduler_socket, server_args.dp_size
         )
+        self.get_load_communicator = _Communicator(
+            send_to_scheduler_socket, server_args.dp_size
+        )
         self.expert_distribution_communicator = _Communicator(
             send_to_scheduler_socket, server_args.dp_size
         )
         self.update_lora_adapter_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
-        )
-        self.get_load_communicator = _Communicator(
             send_to_scheduler_socket, server_args.dp_size
         )
 
@@ -175,6 +177,10 @@ class CommunicatorMixin:
                 (
                     SetInternalStateReqOutput,
                     self.set_internal_state_communicator.handle_recv,
+                ),
+                (
+                    GetLoadReqOutput,
+                    self.get_load_communicator.handle_recv,
                 ),
                 (
                     ExpertDistributionReqOutput,
@@ -438,10 +444,6 @@ class CommunicatorMixin:
         )
         return [res.updated for res in responses]
 
-    async def get_load(self) -> dict:
-        # TODO(lsyin): fake load report server
-        if not self.current_load_lock.locked():
-            async with self.current_load_lock:
-                internal_state = await self.get_internal_state()
-                self.current_load = internal_state[0]["load"]
-        return {"load": self.current_load}
+    async def get_load(self) -> List[GetLoadReqOutput]:
+        req = GetLoadReq()
+        return await self.get_load_communicator(req)

@@ -370,9 +370,12 @@ async def get_server_info():
     }
 
 
-@app.get("/get_load")
+# curl http://localhost:30000/get_load
+@app.api_route("/get_load", methods=["GET", "POST"])
 async def get_load():
-    return await _global_state.tokenizer_manager.get_load()
+    responses = await _global_state.tokenizer_manager.get_load()
+    responses = [dataclasses.asdict(r) for r in responses]
+    return responses
 
 
 # example usage:

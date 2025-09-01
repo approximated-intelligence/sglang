@@ -997,6 +997,16 @@ class SetInternalStateReqOutput:
 
 
 @dataclass
+class GetLoadReq:
+    pass
+
+
+@dataclass
+class GetLoadReqOutput:
+    num_tokens: int
+
+
+@dataclass
 class ProfileReqInput:
     # The output directory
     output_dir: Optional[str] = None

@@ -77,6 +77,7 @@ from sglang.srt.managers.io_struct import (
     FreezeGCReq,
     GetInternalStateReq,
     GetInternalStateReqOutput,
+    GetLoadReq,
     GetWeightsByNameReqInput,
     HealthCheckOutput,
     InitWeightsUpdateGroupReqInput,
@@ -537,6 +538,7 @@ class Scheduler(
                 (ExpertDistributionReq, self.expert_distribution_handle),
                 (LoadLoRAAdapterReqInput, self.load_lora_adapter),
                 (UnloadLoRAAdapterReqInput, self.unload_lora_adapter),
+                (GetLoadReq, self.get_load),
             ]
         )
 
@@ -2172,8 +2174,6 @@ class Scheduler(
             )
         if RECORD_STEP_TIME:
             ret["step_time_dict"] = self.step_time_dict
-
-        ret["load"] = self.get_load()
 
         return GetInternalStateReqOutput(internal_state=ret)
 
