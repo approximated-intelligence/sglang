@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import time
 from collections import deque
@@ -50,16 +51,42 @@ logger = logging.getLogger(__name__)
 
 
 class _Communicator(Generic[T]):
-    """Note: The communicator now only run up to 1 in-flight request at any time."""
+    """
+    The Communicator handles only one in-flight request at a time.
 
-    def __init__(self, sender, fan_out: int):
+    - Queueing mode: Requests are processed sequentially. An incoming request is blocked until all preceding requests have completed.
+    - Watching mode: Concurrent requests are collapsed. If multiple requests arrive while one is in-flight,
+    they all await the same result from the single underlying operation.
+    """
+
+    def __init__(self, sender, fan_out: int, mode="queueing"):
         self._sender = sender
         self._fan_out = fan_out
+        self._mode = mode
         self._result_event: Optional[asyncio.Event] = None
         self._result_values: Optional[List[T]] = None
         self._ready_queue: Deque[asyncio.Future] = deque()
 
-    async def __call__(self, obj):
+        assert self._mode in ["queueing", "watching"]
+        if self._mode == "queueing":
+            self.__call__ = self.queueing_call
+        else:
+            self.__call__ = self.watching_call
+
+    async def watching_call(self, obj):
+        if self._result_event is None:
+            assert self._result_values is None
+            self._result_event = asyncio.Event()
+
+            if obj:
+                self._sender.send_pyobj(obj)
+
+        await self._result_event.wait()
+        result_values = copy.deepcopy(self._result_values)
+        self._result_event = self._result_values = None
+        return result_values
+
+    async def queueing_call(self, obj):
         ready_event = asyncio.Event()
         if self._result_event is not None or len(self._ready_queue) > 0:
             self._ready_queue.append(ready_event)
@@ -123,7 +150,7 @@ class CommunicatorMixin:
             send_to_scheduler_socket, server_args.dp_size
         )
         self.get_load_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            send_to_scheduler_socket, server_args.dp_size, mode="watching"
         )
         self.expert_distribution_communicator = _Communicator(
             send_to_scheduler_socket, server_args.dp_size
