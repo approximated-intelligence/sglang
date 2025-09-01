@@ -16,13 +16,9 @@
 import logging
 import multiprocessing as mp
 import signal
-import struct
-import sys
 import threading
 import time
 from enum import Enum, auto
-from multiprocessing import shared_memory
-from typing import Dict, List
 
 import psutil
 import setproctitle
