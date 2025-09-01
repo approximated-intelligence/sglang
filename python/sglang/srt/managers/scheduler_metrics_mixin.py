@@ -387,7 +387,8 @@ class SchedulerMetricsMixin:
 
     def maybe_handle_dp_balance_data(self: Scheduler):
         if (
-            self.server_args.load_balance_method == "minimum_tokens"
+            self.server_args.enable_dp_attention
+            and self.server_args.load_balance_method == "minimum_tokens"
             and self.forward_ct % 40 == 0
         ):
             self.handle_dp_balance_data()
