@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import logging
 import time
 from collections import defaultdict
-from typing import Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
 import torch
 
@@ -15,13 +17,16 @@ from sglang.srt.metrics.collector import SchedulerMetricsCollector, SchedulerSta
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import get_bool_env_var
 
+if TYPE_CHECKING:
+    from sglang.srt.managers.scheduler import Scheduler
+
 logger = logging.getLogger(__name__)
 
 RECORD_STEP_TIME = get_bool_env_var("SGLANG_RECORD_STEP_TIME")
 
 
 class KvMetrics:
-    def __init__(self):
+    def __init__(self: Scheduler):
         self.request_active_slots = None
         self.request_total_slots = None
         self.kv_active_blocks = None
@@ -34,7 +39,7 @@ class KvMetrics:
 
 class SchedulerMetricsMixin:
     def init_metrics(
-        self,
+        self: Scheduler,
         server_args: ServerArgs,
         tp_rank: int,
         pp_rank: int,
@@ -72,14 +77,14 @@ class SchedulerMetricsMixin:
 
         self.recv_dp_balance_id_this_term = []
 
-    def init_kv_events(self, kv_events_config: Optional[str]):
+    def init_kv_events(self: Scheduler, kv_events_config: Optional[str]):
         if self.enable_kv_cache_events:
             self.kv_event_publisher = EventPublisherFactory.create(
                 kv_events_config, self.attn_dp_rank
             )
 
     def log_prefill_stats(
-        self,
+        self: Scheduler,
         adder: PrefillAdder,
         can_run_list: List[Req],
         running_bs: int,
@@ -160,7 +165,7 @@ class SchedulerMetricsMixin:
         self._publish_kv_events()
 
     def log_decode_stats(
-        self, can_run_cuda_graph: bool, running_batch: ScheduleBatch = None
+        self: Scheduler, can_run_cuda_graph: bool, running_batch: ScheduleBatch = None
     ):
         batch = running_batch or self.running_batch
 
@@ -242,7 +247,7 @@ class SchedulerMetricsMixin:
             self._emit_kv_metrics()
         self._publish_kv_events()
 
-    def _emit_kv_metrics(self):
+    def _emit_kv_metrics(self: Scheduler):
         kv_metrics = KvMetrics()
         kv_metrics.request_active_slots = self.stats.num_running_reqs
         kv_metrics.request_total_slots = self.max_running_requests
@@ -258,7 +263,7 @@ class SchedulerMetricsMixin:
         if not self.send_metrics_from_scheduler.closed:
             self.send_metrics_from_scheduler.send_pyobj(kv_metrics)
 
-    def _publish_kv_events(self):
+    def _publish_kv_events(self: Scheduler):
         if self.enable_kv_cache_events:
             events = self.tree_cache.take_events()
             if events:
@@ -266,7 +271,7 @@ class SchedulerMetricsMixin:
                 self.kv_event_publisher.publish(batch)
 
     def gather_dp_balance_info(
-        self, holding_tokens_list
+        self: Scheduler, holding_tokens_list
     ) -> Union[None, List[List[int]]]:
         """gather recv_dp_balance_id_this_term and holding tokens per worker for dp balance"""
         recv_list = self.recv_dp_balance_id_this_term
@@ -304,7 +309,7 @@ class SchedulerMetricsMixin:
 
         return gathered_id_list_per_worker, holding_tokens_list
 
-    def write_shared_dp_balance_info(self, new_recv_rid_lists, local_tokens):
+    def write_shared_dp_balance_info(self: Scheduler, new_recv_rid_lists, local_tokens):
         meta = self.balance_meta
 
         with meta.mutex:
@@ -324,7 +329,41 @@ class SchedulerMetricsMixin:
             meta.set_shared_onfly_info(onfly_list)
             meta.set_shared_local_tokens(local_tokens)
 
-    def handle_dp_balance_data(self):
+    def get_load(self: Scheduler):
+        # TODO(lsyin): use dynamically maintained num_waiting_tokens
+        if self.is_hybrid:
+            load_full = (
+                self.full_tokens_per_layer
+                - self.token_to_kv_pool_allocator.full_available_size()
+                - self.tree_cache.full_evictable_size()
+            )
+            load_swa = (
+                self.swa_tokens_per_layer
+                - self.token_to_kv_pool_allocator.swa_available_size()
+                - self.tree_cache.swa_evictable_size()
+            )
+            load = max(load_full, load_swa)
+        else:
+            load = (
+                self.max_total_num_tokens
+                - self.token_to_kv_pool_allocator.available_size()
+                - self.tree_cache.evictable_size()
+            )
+        load += sum(len(req.origin_input_ids) for req in self.waiting_queue)
+        if self.disaggregation_mode == DisaggregationMode.PREFILL:
+            load += sum(
+                len(req.origin_input_ids)
+                for req in self.disagg_prefill_bootstrap_queue.queue
+            )
+        elif self.disaggregation_mode == DisaggregationMode.DECODE:
+            load += sum(
+                len(req.req.origin_input_ids)
+                for req in self.disagg_decode_prealloc_queue.queue
+            )
+
+        return load
+
+    def handle_dp_balance_data(self: Scheduler):
         holding_tokens = self.get_load()
 
         new_recv_dp_balance_id_list, holding_token_list = self.gather_dp_balance_info(
@@ -337,14 +376,16 @@ class SchedulerMetricsMixin:
                 new_recv_dp_balance_id_list, holding_token_list
             )
 
-    def maybe_update_dp_balance_info(self, recv_req: TokenizedGenerateReqInput):
+    def maybe_update_dp_balance_info(
+        self: Scheduler, recv_req: TokenizedGenerateReqInput
+    ):
         if (
             self.server_args.enable_dp_attention
             and self.server_args.load_balance_method == "minimum_tokens"
         ):
             self.recv_dp_balance_id_this_term.append(recv_req.dp_balance_id)
 
-    def maybe_handle_dp_balance_data(self):
+    def maybe_handle_dp_balance_data(self: Scheduler):
         if (
             self.server_args.load_balance_method == "minimum_tokens"
             and self.forward_ct % 40 == 0

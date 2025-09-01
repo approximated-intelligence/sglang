@@ -2148,40 +2148,6 @@ class Scheduler(
             if_success = False
         return if_success
 
-    def get_load(self):
-        # TODO(lsyin): use dynamically maintained num_waiting_tokens
-        if self.is_hybrid:
-            load_full = (
-                self.full_tokens_per_layer
-                - self.token_to_kv_pool_allocator.full_available_size()
-                - self.tree_cache.full_evictable_size()
-            )
-            load_swa = (
-                self.swa_tokens_per_layer
-                - self.token_to_kv_pool_allocator.swa_available_size()
-                - self.tree_cache.swa_evictable_size()
-            )
-            load = max(load_full, load_swa)
-        else:
-            load = (
-                self.max_total_num_tokens
-                - self.token_to_kv_pool_allocator.available_size()
-                - self.tree_cache.evictable_size()
-            )
-        load += sum(len(req.origin_input_ids) for req in self.waiting_queue)
-        if self.disaggregation_mode == DisaggregationMode.PREFILL:
-            load += sum(
-                len(req.origin_input_ids)
-                for req in self.disagg_prefill_bootstrap_queue.queue
-            )
-        elif self.disaggregation_mode == DisaggregationMode.DECODE:
-            load += sum(
-                len(req.req.origin_input_ids)
-                for req in self.disagg_decode_prealloc_queue.queue
-            )
-
-        return load
-
     def get_internal_state(self, recv_req: GetInternalStateReq):
         ret = dict(global_server_args_dict)
         ret["last_gen_throughput"] = self.last_gen_throughput
