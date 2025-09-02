@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import copy
 import logging
@@ -57,7 +59,10 @@ from sglang.srt.utils import get_bool_env_var
 from sglang.utils import TypeBasedDispatcher
 
 if TYPE_CHECKING:
-    from sglang.srt.managers.tokenizer_manager import TokenizerManager
+    from sglang.srt.managers.tokenizer_manager import (
+        TokenizerManager,
+        _SendPyObjWrapper,
+    )
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
@@ -81,14 +86,17 @@ class _Communicator(Generic[T]):
         self._ready_queue: Deque[asyncio.Future] = deque()
 
         assert self._mode in ["queueing", "watching"]
+
+    async def __call__(self, obj):
         if self._mode == "queueing":
-            self.__call__ = self.queueing_call
+            return await self.queueing_call(obj)
         else:
-            self.__call__ = self.watching_call
+            return await self.watching_call(obj)
 
     async def watching_call(self, obj):
         if self._result_event is None:
             assert self._result_values is None
+            self._result_values = []
             self._result_event = asyncio.Event()
 
             if obj:
@@ -129,49 +137,45 @@ class _Communicator(Generic[T]):
 
 class CommunicatorMixin:
     def init_communicators(
-        self: TokenizerManager, send_to_scheduler_socket, server_args: ServerArgs
+        self: TokenizerManager,
+        sender: _SendPyObjWrapper,
+        server_args: ServerArgs,
     ):
         self.init_weights_update_group_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
         self.update_weights_from_distributed_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
         self.update_weights_from_tensor_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
         self.get_weights_by_name_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
         self.release_memory_occupation_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
         self.resume_memory_occupation_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
-        self.slow_down_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
-        )
-        self.flush_cache_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
-        )
-        self.profile_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
-        )
+        self.slow_down_communicator = _Communicator(sender, server_args.dp_size)
+        self.flush_cache_communicator = _Communicator(sender, server_args.dp_size)
+        self.profile_communicator = _Communicator(sender, server_args.dp_size)
         self.get_internal_state_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
         self.set_internal_state_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
         self.get_load_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size, mode="watching"
+            sender, server_args.dp_size, mode="watching"
         )
         self.expert_distribution_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
         self.update_lora_adapter_communicator = _Communicator(
-            send_to_scheduler_socket, server_args.dp_size
+            sender, server_args.dp_size
         )
 
         self._communicator_dispatcher = TypeBasedDispatcher(
@@ -493,3 +497,9 @@ class CommunicatorMixin:
     async def get_load(self) -> List[GetLoadReqOutput]:
         req = GetLoadReq()
         return await self.get_load_communicator(req)
+
+    async def watch_load_thread(self):
+        while True:
+            await asyncio.sleep(1)
+            loads = await self.get_load_communicator(GetLoadReq())
+            # TODO: update dp budget

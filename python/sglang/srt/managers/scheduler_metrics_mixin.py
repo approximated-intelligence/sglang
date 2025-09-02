@@ -359,18 +359,25 @@ class SchedulerMetricsMixin:
 
         # Tokens in waiting queue, bootstrap queue, prealloc queue
         num_tokens += sum(len(req.origin_input_ids) for req in self.waiting_queue)
+        num_waiting_reqs = len(self.waiting_queue)
         if self.disaggregation_mode == DisaggregationMode.PREFILL:
             num_tokens += sum(
                 len(req.origin_input_ids)
                 for req in self.disagg_prefill_bootstrap_queue.queue
             )
+            num_waiting_reqs += len(self.disagg_prefill_bootstrap_queue.queue)
         elif self.disaggregation_mode == DisaggregationMode.DECODE:
             num_tokens += sum(
                 len(req.req.origin_input_ids)
                 for req in self.disagg_decode_prealloc_queue.queue
             )
+            num_waiting_reqs += len(self.disagg_decode_prealloc_queue.queue)
 
-        return GetLoadReqOutput(num_tokens=num_tokens)
+        return GetLoadReqOutput(
+            dp_rank=self.dp_rank,
+            num_waiting_reqs=num_waiting_reqs,
+            num_tokens=num_tokens,
+        )
 
     def handle_dp_balance_data(self: Scheduler):
         holding_tokens = self.get_load().num_tokens

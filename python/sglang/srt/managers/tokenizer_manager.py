@@ -68,6 +68,7 @@ from sglang.srt.managers.io_struct import (
     EmbeddingReqInput,
     FreezeGCReq,
     GenerateReqInput,
+    GetLoadReqOutput,
     HealthCheckOutput,
     OpenSessionReqInput,
     OpenSessionReqOutput,
@@ -134,6 +135,35 @@ class ReqState:
     input_token_ids_logprobs_idx: List = dataclasses.field(default_factory=list)
     output_token_ids_logprobs_val: List = dataclasses.field(default_factory=list)
     output_token_ids_logprobs_idx: List = dataclasses.field(default_factory=list)
+
+
+class DPBudgets:
+    # FIXME: move dp controller to here
+    def __init__(self):
+        self.budget_queue = deque()
+
+    def update_budget(self, loads: List[GetLoadReqOutput]):
+        num_waiting_reqs = [load.num_waiting_reqs for load in loads]
+        max_num_waiting_reqs = max(num_waiting_reqs)
+        while any(x < max_num_waiting_reqs for x in num_waiting_reqs):
+            for i, x in enumerate(num_waiting_reqs):
+                if x < max_num_waiting_reqs:
+                    self.budget_queue.append(loads[i].dp_rank)
+                    x += 1
+
+    def dispatch(self):
+        # TODO: dispatch via dp budget
+        pass
+
+
+class _SendPyObjWrapper:
+    def __init__(self, sender):
+        self.sender = sender
+        pass
+
+    def send_pyobj(self, obj):
+        # TODO: dispatch via dp budget
+        self.sender.send_pyobj(obj)
 
 
 class TokenizerManager(CommunicatorMixin):
@@ -224,8 +254,8 @@ class TokenizerManager(CommunicatorMixin):
         self.recv_from_detokenizer = get_zmq_socket(
             context, zmq.PULL, port_args.tokenizer_ipc_name, True
         )
-        self.send_to_scheduler = get_zmq_socket(
-            context, zmq.PUSH, port_args.scheduler_input_ipc_name, True
+        self.send_to_scheduler = _SendPyObjWrapper(
+            get_zmq_socket(context, zmq.PUSH, port_args.scheduler_input_ipc_name, True)
         )
 
         # Request states
