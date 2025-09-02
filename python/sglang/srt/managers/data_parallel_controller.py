@@ -90,7 +90,7 @@ class DataParallelController:
         self.round_robin_counter = 0
         dispatch_lookup = {
             LoadBalanceMethod.ROUND_ROBIN: self.round_robin_scheduler,
-            LoadBalanceMethod.SHORTEST_QUEUE: self.shortest_queue_scheduler,
+            LoadBalanceMethod.SHORTEST_QUEUE: self.round_robin_scheduler,  # FIXME deprecate the dp balance dispatch here
             LoadBalanceMethod.MINIMUM_TOKENS: self.minimum_tokens_scheduler,
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]

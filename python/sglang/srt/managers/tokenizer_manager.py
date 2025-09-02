@@ -140,6 +140,7 @@ class ReqState:
 class DPBudgets:
     # FIXME: move dp controller to here
     def __init__(self):
+        # TODO: support minimum tokens method
         self.budget_queue = deque()
 
     def update_budget(self, loads: List[GetLoadReqOutput]):
@@ -152,17 +153,32 @@ class DPBudgets:
                     x += 1
 
     def dispatch(self):
-        # TODO: dispatch via dp budget
-        pass
+        if self.budget_queue:
+            return self.budget_queue.popleft()
+        return None
 
 
 class _SendPyObjWrapper:
-    def __init__(self, sender):
+    def __init__(self, sender, method: Optional[str] = None):
         self.sender = sender
-        pass
+        self.method = method
+        self.dp_budget = DPBudgets()
+
+    def update_dp_balance_state(self, loads: List[GetLoadReqOutput]):
+        assert (
+            self.method == "shortest_queue"
+        ), "Only shortest queue method is supported"
+        self.dp_budget.update_budget(loads)
 
     def send_pyobj(self, obj):
-        # TODO: dispatch via dp budget
+        if isinstance(obj, TokenizedGenerateReqInput):
+            if obj.data_parallel_rank is not None:
+                logger.warning(
+                    "externally dp_rank is set when method is shortest_queue"
+                )
+            else:
+                obj.data_parallel_rank = self.dp_budget.dispatch()
+
         self.sender.send_pyobj(obj)
 
 
@@ -255,7 +271,8 @@ class TokenizerManager(CommunicatorMixin):
             context, zmq.PULL, port_args.tokenizer_ipc_name, True
         )
         self.send_to_scheduler = _SendPyObjWrapper(
-            get_zmq_socket(context, zmq.PUSH, port_args.scheduler_input_ipc_name, True)
+            get_zmq_socket(context, zmq.PUSH, port_args.scheduler_input_ipc_name, True),
+            server_args.load_balance_method,
         )
 
         # Request states

@@ -239,6 +239,9 @@ class CommunicatorMixin:
             ]
         )
 
+        if server_args.load_balance_method == "shortest_queue":
+            self.start_watch_load_thread()
+
     async def flush_cache(self: TokenizerManager) -> FlushCacheReqOutput:
         return (await self.flush_cache_communicator(FlushCacheReqInput()))[0]
 
@@ -498,8 +501,11 @@ class CommunicatorMixin:
         req = GetLoadReq()
         return await self.get_load_communicator(req)
 
-    async def watch_load_thread(self):
-        while True:
-            await asyncio.sleep(1)
-            loads = await self.get_load_communicator(GetLoadReq())
-            # TODO: update dp budget
+    async def start_watch_load_thread(self: TokenizerManager):
+        async def _watch_load_thread():
+            while True:
+                await asyncio.sleep(1)
+                loads = await self.get_load_communicator(GetLoadReq())
+                self.send_to_scheduler.update_dp_balance_state(loads)
+
+        self.watch_load_thread = asyncio.create_task(_watch_load_thread())
