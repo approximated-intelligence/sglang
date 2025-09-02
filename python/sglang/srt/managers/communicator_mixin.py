@@ -3,7 +3,17 @@ import copy
 import logging
 import time
 from collections import deque
-from typing import Any, Deque, Dict, Generic, List, Optional, Tuple, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Deque,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+)
 
 import fastapi
 
@@ -45,6 +55,9 @@ from sglang.srt.managers.io_struct import (
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import get_bool_env_var
 from sglang.utils import TypeBasedDispatcher
+
+if TYPE_CHECKING:
+    from sglang.srt.managers.tokenizer_manager import TokenizerManager
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
@@ -115,7 +128,9 @@ class _Communicator(Generic[T]):
 
 
 class CommunicatorMixin:
-    def init_communicators(self, send_to_scheduler_socket, server_args: ServerArgs):
+    def init_communicators(
+        self: TokenizerManager, send_to_scheduler_socket, server_args: ServerArgs
+    ):
         self.init_weights_update_group_communicator = _Communicator(
             send_to_scheduler_socket, server_args.dp_size
         )
@@ -220,11 +235,11 @@ class CommunicatorMixin:
             ]
         )
 
-    async def flush_cache(self) -> FlushCacheReqOutput:
+    async def flush_cache(self: TokenizerManager) -> FlushCacheReqOutput:
         return (await self.flush_cache_communicator(FlushCacheReqInput()))[0]
 
     async def start_profile(
-        self,
+        self: TokenizerManager,
         output_dir: Optional[str] = None,
         start_step: Optional[int] = None,
         num_steps: Optional[int] = None,
@@ -249,31 +264,31 @@ class CommunicatorMixin:
         )
         return await self._execute_profile(req)
 
-    async def stop_profile(self):
+    async def stop_profile(self: TokenizerManager):
         self.auto_create_handle_loop()
         req = ProfileReq(type=ProfileReqType.STOP_PROFILE)
         return await self._execute_profile(req)
 
-    async def _execute_profile(self, req: ProfileReq):
+    async def _execute_profile(self: TokenizerManager, req: ProfileReq):
         result = (await self.profile_communicator(req))[0]
         if not result.success:
             raise RuntimeError(result.message)
         return result
 
-    async def start_expert_distribution_record(self):
+    async def start_expert_distribution_record(self: TokenizerManager):
         self.auto_create_handle_loop()
         await self.expert_distribution_communicator(ExpertDistributionReq.START_RECORD)
 
-    async def stop_expert_distribution_record(self):
+    async def stop_expert_distribution_record(self: TokenizerManager):
         self.auto_create_handle_loop()
         await self.expert_distribution_communicator(ExpertDistributionReq.STOP_RECORD)
 
-    async def dump_expert_distribution_record(self):
+    async def dump_expert_distribution_record(self: TokenizerManager):
         self.auto_create_handle_loop()
         await self.expert_distribution_communicator(ExpertDistributionReq.DUMP_RECORD)
 
     async def init_weights_update_group(
-        self,
+        self: TokenizerManager,
         obj: InitWeightsUpdateGroupReqInput,
         request: Optional[fastapi.Request] = None,
     ) -> Tuple[bool, str]:
@@ -285,7 +300,7 @@ class CommunicatorMixin:
         return result.success, result.message
 
     async def update_weights_from_distributed(
-        self,
+        self: TokenizerManager,
         obj: UpdateWeightsFromDistributedReqInput,
         request: Optional[fastapi.Request] = None,
     ) -> Tuple[bool, str]:
@@ -304,7 +319,7 @@ class CommunicatorMixin:
             return result.success, result.message
 
     async def update_weights_from_tensor(
-        self,
+        self: TokenizerManager,
         obj: UpdateWeightsFromTensorReqInput,
         request: Optional[fastapi.Request] = None,
     ) -> Tuple[bool, str]:
@@ -323,7 +338,7 @@ class CommunicatorMixin:
             return result.success, result.message
 
     async def load_lora_adapter(
-        self,
+        self: TokenizerManager,
         obj: LoadLoRAAdapterReqInput,
         _: Optional[fastapi.Request] = None,
     ) -> LoadLoRAAdapterReqOutput:
@@ -381,7 +396,7 @@ class CommunicatorMixin:
             )
 
     async def unload_lora_adapter(
-        self,
+        self: TokenizerManager,
         obj: UnloadLoRAAdapterReqInput,
         _: Optional[fastapi.Request] = None,
     ) -> UnloadLoRAAdapterReqOutput:
@@ -423,7 +438,9 @@ class CommunicatorMixin:
             return UnloadLoRAAdapterReqOutput(success=False, error_message=str(e))
 
     async def get_weights_by_name(
-        self, obj: GetWeightsByNameReqInput, request: Optional[fastapi.Request] = None
+        self: TokenizerManager,
+        obj: GetWeightsByNameReqInput,
+        request: Optional[fastapi.Request] = None,
     ):
         self.auto_create_handle_loop()
         results = await self.get_weights_by_name_communicator(obj)
@@ -434,7 +451,7 @@ class CommunicatorMixin:
             return all_parameters
 
     async def release_memory_occupation(
-        self,
+        self: TokenizerManager,
         obj: ReleaseMemoryOccupationReqInput,
         request: Optional[fastapi.Request] = None,
     ):
@@ -442,7 +459,7 @@ class CommunicatorMixin:
         await self.release_memory_occupation_communicator(obj)
 
     async def resume_memory_occupation(
-        self,
+        self: TokenizerManager,
         obj: ResumeMemoryOccupationReqInput,
         request: Optional[fastapi.Request] = None,
     ):
@@ -450,7 +467,7 @@ class CommunicatorMixin:
         await self.resume_memory_occupation_communicator(obj)
 
     async def slow_down(
-        self,
+        self: TokenizerManager,
         obj: SlowDownReqInput,
         request: Optional[fastapi.Request] = None,
     ):
@@ -465,7 +482,9 @@ class CommunicatorMixin:
         # Many DP ranks
         return [res.internal_state for res in responses]
 
-    async def set_internal_state(self, obj: SetInternalStateReq) -> List[bool]:
+    async def set_internal_state(
+        self: TokenizerManager, obj: SetInternalStateReq
+    ) -> List[bool]:
         responses: List[SetInternalStateReqOutput] = (
             await self.set_internal_state_communicator(obj)
         )
