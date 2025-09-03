@@ -375,6 +375,7 @@ class SchedulerMetricsMixin:
 
         return GetLoadReqOutput(
             dp_rank=self.dp_rank,
+            num_reqs=len(self.running_batch.reqs) + num_waiting_reqs,
             num_waiting_reqs=num_waiting_reqs,
             num_tokens=num_tokens,
         )

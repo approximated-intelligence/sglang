@@ -144,15 +144,28 @@ class DPBudgets:
         self.budget_queue = deque()
 
     def update_budget(self, loads: List[GetLoadReqOutput]):
+        """Update the budget queue.
+        Use num_reqs instead of num_waiting_reqs to balance decode running batch.
+        """
         self.budget_queue.clear()
 
-        num_waiting_reqs = [load.num_waiting_reqs for load in loads]
-        max_num_waiting_reqs = max(num_waiting_reqs)
-        while any(x < max_num_waiting_reqs for x in num_waiting_reqs):
-            for i, x in enumerate(num_waiting_reqs):
-                if x < max_num_waiting_reqs:
-                    self.budget_queue.append(loads[i].dp_rank)
-                    num_waiting_reqs[i] += 1
+        num_reqs = [load.num_reqs for load in loads]
+        if not num_reqs:
+            return
+
+        max_num_reqs = max(num_reqs)
+        if all(x == max_num_reqs for x in num_reqs):
+            return
+
+        while any(x != num_reqs[0] for x in num_reqs):
+            min_load = min(num_reqs)
+            min_indices = [i for i, x in enumerate(num_reqs) if x == min_load]
+            second_min_load = min(x for x in num_reqs if x > min_load)
+            self.budget_queue.extend(
+                [loads[i].dp_rank for i in min_indices] * (second_min_load - min_load)
+            )
+            for idx in min_indices:
+                num_reqs[idx] = second_min_load
 
     def dispatch(self):
         if self.budget_queue:

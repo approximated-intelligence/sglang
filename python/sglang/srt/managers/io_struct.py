@@ -1004,6 +1004,7 @@ class GetLoadReq:
 @dataclass
 class GetLoadReqOutput:
     dp_rank: int
+    num_reqs: int
     num_waiting_reqs: int
     num_tokens: int
 
