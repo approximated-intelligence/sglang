@@ -1,29 +1,21 @@
-import json
-import os
-import random
 import time
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from typing import List, Optional
-
-import requests
+from urllib.parse import urlparse
 
 from sglang.srt.utils import kill_process_tree
 from sglang.test.few_shot_gsm8k import run_eval
-from sglang.test.runners import DEFAULT_PROMPTS
 from sglang.test.test_utils import (
-    DEFAULT_EAGLE_DRAFT_MODEL_FOR_TEST,
-    DEFAULT_EAGLE_TARGET_MODEL_FOR_TEST,
     DEFAULT_MODEL_NAME_FOR_TEST,
     DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
     DEFAULT_URL_FOR_TEST,
     CustomTestCase,
-    popen_launch_server,
+    popen_launch_pd_server,
+    popen_with_error_check,
 )
 
 
-class TestPDPPAccuracy(unittest.TestCase):
+class TestPDPPAccuracy(CustomTestCase):
     @classmethod
     def setUpClass(cls):
         cls.model = DEFAULT_MODEL_NAME_FOR_TEST
@@ -63,9 +55,7 @@ class TestPDPPAccuracy(unittest.TestCase):
         ]
 
         print("Starting load balancer:", " ".join(lb_command))
-        cls.process_lb = subprocess.Popen(
-            lb_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
+        cls.process_lb = popen_with_error_check(lb_command)
         cls.wait_server_ready(cls.lb_url + "/health")
 
     @classmethod
