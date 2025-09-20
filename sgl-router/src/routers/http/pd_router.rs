@@ -1,10 +1,10 @@
 // PD (Prefill-Decode) Router Implementation
 // This module handles routing for disaggregated prefill-decode systems
-use super::pd_types::{api_path, PDRouterError};
+use super::pd_types::api_path;
 use crate::config::types::RetryConfig;
 use crate::core::{
-    is_retryable_status, BasicWorkerBuilder, CircuitBreakerConfig, ConnectionMode, RetryExecutor,
-    Worker, WorkerLoadGuard, WorkerRegistry, WorkerType,
+    is_retryable_status, CircuitBreakerConfig, ConnectionMode, RetryExecutor, Worker,
+    WorkerLoadGuard, WorkerRegistry, WorkerType,
 };
 use crate::metrics::RouterMetrics;
 use crate::policies::{LoadBalancingPolicy, PolicyRegistry};
@@ -13,7 +13,7 @@ use crate::protocols::spec::{
     ResponsesRequest, StringOrArray, UserMessageContent,
 };
 use crate::routers::header_utils;
-use crate::routers::{RouterTrait, WorkerManagement};
+use crate::routers::RouterTrait;
 use async_trait::async_trait;
 use axum::{
     body::Body,
@@ -37,18 +37,13 @@ use tracing::{debug, error, info, warn};
 pub struct PDRouter {
     pub worker_registry: Arc<WorkerRegistry>,
     pub policy_registry: Arc<PolicyRegistry>,
-    pub worker_startup_timeout_secs: u64,
-    pub worker_startup_check_interval_secs: u64,
     pub worker_loads: Arc<tokio::sync::watch::Receiver<HashMap<String, isize>>>,
     pub load_monitor_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
     pub client: Client,
-    // Dedicated client for prefill fire-and-forget (non-logprob) requests
     pub prefill_client: Client,
     pub retry_config: RetryConfig,
     pub circuit_breaker_config: CircuitBreakerConfig,
     pub api_key: Option<String>,
-
-    // Channel for sending prefill responses to background workers for draining
     prefill_drain_tx: mpsc::Sender<reqwest::Response>,
 }
 
@@ -64,19 +59,6 @@ struct PDRequestContext<'a> {
 }
 
 impl PDRouter {
-    // Private helper method to perform health check on a new server
-    async fn wait_for_server_health(&self, url: &str) -> Result<(), PDRouterError> {
-        crate::routers::http::router::Router::wait_for_healthy_workers(
-            &[url.to_string()],
-            self.worker_startup_timeout_secs,
-            self.worker_startup_check_interval_secs,
-        )
-        .await
-        .map_err(|_| PDRouterError::HealthCheckFailed {
-            url: url.to_string(),
-        })
-    }
-
     // Generic helper for processing all workers with an endpoint
     async fn process_workers(
         &self,
@@ -208,159 +190,6 @@ impl PDRouter {
                 )
                     .into_response()
             }
-        }
-    }
-
-    pub async fn add_prefill_server(
-        &self,
-        url: String,
-        api_key: Option<String>,
-        bootstrap_port: Option<u16>,
-    ) -> Result<String, PDRouterError> {
-        // Wait for the new server to be healthy
-        self.wait_for_server_health(&url).await?;
-
-        // Check if already exists
-        if self.worker_registry.get_by_url(&url).is_some() {
-            return Err(PDRouterError::WorkerAlreadyExists { url: url.clone() });
-        }
-
-        // Create Worker for the new prefill server with circuit breaker configuration
-        // TODO: In IGW mode, fetch model_id from worker's /get_model_info endpoint
-        let worker_builder = BasicWorkerBuilder::new(url.clone())
-            .worker_type(WorkerType::Prefill { bootstrap_port })
-            .circuit_breaker_config(self.circuit_breaker_config.clone());
-
-        let worker = if let Some(api_key) = api_key {
-            worker_builder.api_key(api_key).build()
-        } else {
-            worker_builder.build()
-        };
-
-        let worker_arc: Arc<dyn Worker> = Arc::new(worker);
-
-        // Register the worker in the registry
-        self.worker_registry.register(worker_arc.clone());
-
-        // Notify PolicyRegistry about the new worker
-        let model_id = worker_arc.model_id();
-        self.policy_registry.on_worker_added(model_id, None);
-
-        // Initialize cache-aware policy if applicable
-        let model_workers = self.worker_registry.get_by_model_fast(model_id);
-        self.policy_registry
-            .init_cache_aware_policy(model_id, &model_workers);
-
-        info!("Added prefill server: {}", url);
-        Ok(format!("Successfully added prefill server: {}", url))
-    }
-
-    pub async fn add_decode_server(
-        &self,
-        url: String,
-        api_key: Option<String>,
-    ) -> Result<String, PDRouterError> {
-        // Wait for the new server to be healthy
-        self.wait_for_server_health(&url).await?;
-
-        // Check if already exists
-        if self.worker_registry.get_by_url(&url).is_some() {
-            return Err(PDRouterError::WorkerAlreadyExists { url: url.clone() });
-        }
-
-        // Create Worker for the new decode server with circuit breaker configuration
-        // TODO: In IGW mode, fetch model_id from worker's /get_model_info endpoint
-        let worker_builder = BasicWorkerBuilder::new(url.clone())
-            .worker_type(WorkerType::Decode)
-            .circuit_breaker_config(self.circuit_breaker_config.clone());
-
-        let worker = if let Some(api_key) = api_key {
-            worker_builder.api_key(api_key).build()
-        } else {
-            worker_builder.build()
-        };
-
-        let worker_arc: Arc<dyn Worker> = Arc::new(worker);
-
-        // Register the worker in the registry
-        self.worker_registry.register(worker_arc.clone());
-
-        // Notify PolicyRegistry about the new worker
-        let model_id = worker_arc.model_id();
-        self.policy_registry.on_worker_added(model_id, None);
-
-        // Initialize cache-aware policy if applicable
-        let model_workers = self.worker_registry.get_by_model_fast(model_id);
-        self.policy_registry
-            .init_cache_aware_policy(model_id, &model_workers);
-
-        info!("Added decode server: {}", url);
-        Ok(format!("Successfully added decode server: {}", url))
-    }
-
-    pub async fn remove_prefill_server(&self, url: &str) -> Result<String, PDRouterError> {
-        // Check if worker exists and get model_id
-        let model_id = match self.worker_registry.get_by_url(url) {
-            Some(worker) => worker.model_id().to_string(),
-            None => {
-                return Err(PDRouterError::WorkerNotFound {
-                    url: url.to_string(),
-                });
-            }
-        };
-
-        // Remove from registry
-        let removed = self.worker_registry.remove_by_url(url);
-
-        if removed.is_some() {
-            // Notify PolicyRegistry about the removed worker
-            self.policy_registry.on_worker_removed(&model_id);
-
-            // Remove from cache-aware policy if applicable
-            self.policy_registry
-                .remove_worker_from_cache_aware(&model_id, url);
-        }
-
-        if removed.is_some() {
-            info!("Removed prefill server: {}", url);
-            Ok(format!("Successfully removed prefill server: {}", url))
-        } else {
-            Err(PDRouterError::WorkerNotFound {
-                url: url.to_string(),
-            })
-        }
-    }
-
-    pub async fn remove_decode_server(&self, url: &str) -> Result<String, PDRouterError> {
-        // Check if worker exists and get model_id
-        let model_id = match self.worker_registry.get_by_url(url) {
-            Some(worker) => worker.model_id().to_string(),
-            None => {
-                return Err(PDRouterError::WorkerNotFound {
-                    url: url.to_string(),
-                });
-            }
-        };
-
-        // Remove from registry
-        let removed = self.worker_registry.remove_by_url(url);
-
-        if removed.is_some() {
-            // Notify PolicyRegistry about the removed worker
-            self.policy_registry.on_worker_removed(&model_id);
-
-            // Remove from cache-aware policy if applicable
-            self.policy_registry
-                .remove_worker_from_cache_aware(&model_id, url);
-        }
-
-        if removed.is_some() {
-            info!("Removed decode server: {}", url);
-            Ok(format!("Successfully removed decode server: {}", url))
-        } else {
-            Err(PDRouterError::WorkerNotFound {
-                url: url.to_string(),
-            })
         }
     }
 
@@ -518,10 +347,6 @@ impl PDRouter {
         Ok(PDRouter {
             worker_registry: Arc::clone(&ctx.worker_registry),
             policy_registry: Arc::clone(&ctx.policy_registry),
-            worker_startup_timeout_secs: ctx.router_config.worker_startup_timeout_secs,
-            worker_startup_check_interval_secs: ctx
-                .router_config
-                .worker_startup_check_interval_secs,
             worker_loads,
             load_monitor_handle,
             client: ctx.client.clone(),
@@ -1590,42 +1415,6 @@ async fn get_worker_load(
 }
 
 #[async_trait]
-impl WorkerManagement for PDRouter {
-    async fn add_worker(
-        &self,
-        _worker_url: &str,
-        _api_key: &Option<String>,
-    ) -> Result<String, String> {
-        // For PD router, we don't support adding workers via this generic method
-        Err(
-            "PD router requires specific add_prefill_server or add_decode_server methods"
-                .to_string(),
-        )
-    }
-
-    fn remove_worker(&self, worker_url: &str) {
-        // Remove from registry
-        if let Some(worker) = self.worker_registry.remove_by_url(worker_url) {
-            match worker.worker_type() {
-                WorkerType::Prefill { .. } => {
-                    info!("Removed prefill worker: {}", worker_url);
-                }
-                WorkerType::Decode => {
-                    info!("Removed decode worker: {}", worker_url);
-                }
-                _ => {
-                    info!("Removed worker: {}", worker_url);
-                }
-            }
-        }
-    }
-
-    fn get_worker_urls(&self) -> Vec<String> {
-        self.worker_registry.get_all_urls()
-    }
-}
-
-#[async_trait]
 impl RouterTrait for PDRouter {
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -2095,7 +1884,7 @@ impl RouterTrait for PDRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::WorkerType;
+    use crate::core::{BasicWorkerBuilder, WorkerType};
 
     fn create_test_pd_router() -> PDRouter {
         let worker_registry = Arc::new(WorkerRegistry::new());
@@ -2105,8 +1894,6 @@ mod tests {
         PDRouter {
             worker_registry,
             policy_registry,
-            worker_startup_timeout_secs: 5,
-            worker_startup_check_interval_secs: 1,
             worker_loads: Arc::new(tokio::sync::watch::channel(HashMap::new()).1),
             load_monitor_handle: None,
             client: Client::new(),
@@ -2121,128 +1908,9 @@ mod tests {
     fn create_test_worker(url: String, worker_type: WorkerType, healthy: bool) -> Box<dyn Worker> {
         let worker = BasicWorkerBuilder::new(url)
             .worker_type(worker_type)
-            .api_key("test_api_key")
             .build();
         worker.set_healthy(healthy);
         Box::new(worker)
-    }
-
-    // ============= Worker Management Tests =============
-
-    #[tokio::test]
-    async fn test_add_prefill_server_already_exists() {
-        let router = create_test_pd_router();
-
-        // Add a worker first
-        let worker = create_test_worker(
-            "http://localhost:8000".to_string(),
-            WorkerType::Prefill {
-                bootstrap_port: Some(8080),
-            },
-            true,
-        );
-        router.worker_registry.register(Arc::from(worker));
-
-        // Try to add the same URL again - this would fail during health check in real scenario
-        // For unit test, we test the duplicate check logic
-        let exists = router
-            .worker_registry
-            .get_by_url("http://localhost:8000")
-            .is_some();
-        assert!(exists);
-    }
-
-    #[tokio::test]
-    async fn test_remove_prefill_server_success() {
-        let router = create_test_pd_router();
-
-        // Add servers first
-        let worker1 = create_test_worker(
-            "http://worker1".to_string(),
-            WorkerType::Prefill {
-                bootstrap_port: None,
-            },
-            true,
-        );
-        let worker2 = create_test_worker(
-            "http://worker2".to_string(),
-            WorkerType::Prefill {
-                bootstrap_port: Some(8080),
-            },
-            true,
-        );
-
-        router.worker_registry.register(Arc::from(worker1));
-        router.worker_registry.register(Arc::from(worker2));
-
-        // Remove one
-        let result = router.remove_prefill_server("http://worker1").await;
-
-        assert!(result.is_ok());
-        assert!(result.unwrap().contains("Successfully removed"));
-
-        let workers = router.worker_registry.get_prefill_workers();
-        assert_eq!(workers.len(), 1);
-        assert_eq!(workers[0].url(), "http://worker2");
-    }
-
-    #[tokio::test]
-    async fn test_remove_prefill_server_not_found() {
-        let router = create_test_pd_router();
-
-        let result = router.remove_prefill_server("http://nonexistent").await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PDRouterError::WorkerNotFound { url } => {
-                assert_eq!(url, "http://nonexistent");
-            }
-            _ => panic!("Expected WorkerNotFound error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_remove_decode_server_success() {
-        let router = create_test_pd_router();
-
-        // Add server first
-        let worker = create_test_worker("http://decode1".to_string(), WorkerType::Decode, true);
-        router.worker_registry.register(Arc::from(worker));
-
-        let result = router.remove_decode_server("http://decode1").await;
-
-        assert!(result.is_ok());
-        assert!(result.unwrap().contains("Successfully removed"));
-
-        let workers = router.worker_registry.get_decode_workers();
-        assert_eq!(workers.len(), 0);
-    }
-
-    // ============= Lock Error Handling Tests =============
-
-    #[test]
-    fn test_registry_operations() {
-        let router = create_test_pd_router();
-
-        // Test registry operations
-        let workers = router.worker_registry.get_all();
-        assert_eq!(workers.len(), 0);
-
-        // Add a worker
-        let worker = create_test_worker(
-            "http://test".to_string(),
-            WorkerType::Prefill {
-                bootstrap_port: None,
-            },
-            true,
-        );
-        router.worker_registry.register(Arc::from(worker));
-
-        let workers = router.worker_registry.get_all();
-        assert_eq!(workers.len(), 1);
-
-        let prefill_workers = router.worker_registry.get_prefill_workers();
-        assert_eq!(prefill_workers.len(), 1);
     }
 
     #[tokio::test]
@@ -2458,40 +2126,5 @@ mod tests {
         // Load should be decremented after streaming completes
         assert_eq!(prefill_ref.load(), 0);
         assert_eq!(decode_ref.load(), 0);
-    }
-
-    // ============= Concurrent Operations Tests =============
-
-    #[tokio::test]
-    async fn test_concurrent_worker_operations() {
-        let router = Arc::new(create_test_pd_router());
-
-        let mut handles = vec![];
-
-        // Spawn tasks to add workers
-        for i in 0..5 {
-            let router_clone = Arc::clone(&router);
-            let url = format!("http://worker{}", i);
-            let handle = tokio::spawn(async move {
-                let worker = create_test_worker(
-                    url,
-                    WorkerType::Prefill {
-                        bootstrap_port: None,
-                    },
-                    true,
-                );
-                router_clone.worker_registry.register(Arc::from(worker));
-            });
-            handles.push(handle);
-        }
-
-        // Wait for all tasks
-        for handle in handles {
-            let _ = handle.await;
-        }
-
-        // Check final state
-        let workers = router.worker_registry.get_prefill_workers();
-        assert_eq!(workers.len(), 5);
     }
 }

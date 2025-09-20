@@ -18,19 +18,15 @@ async fn test_policy_registry_with_router_manager() {
     };
 
     // Create HTTP client
-    let client = reqwest::Client::new();
+    let _client = reqwest::Client::new();
 
     // Create shared registries
     let worker_registry = Arc::new(WorkerRegistry::new());
     let policy_registry = Arc::new(PolicyRegistry::new(PolicyConfig::RoundRobin));
 
     // Create RouterManager with shared registries
-    let _router_manager = RouterManager::new(
-        config,
-        client,
-        worker_registry.clone(),
-        policy_registry.clone(),
-    );
+    let _router_manager =
+        RouterManager::new(config, worker_registry.clone(), policy_registry.clone());
 
     // Test adding workers with different models and policies
 

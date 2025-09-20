@@ -670,53 +670,52 @@ impl WorkerFactory {
         }
         Box::new(builder.build())
     }
-    #[allow(dead_code)]
-    /// Get DP size from a worker
-    async fn get_worker_dp_size(url: &str, api_key: &Option<String>) -> WorkerResult<usize> {
-        let mut req_builder = WORKER_CLIENT.get(format!("{}/get_server_info", url));
 
-        if let Some(key) = &api_key {
-            req_builder = req_builder.bearer_auth(key);
-        }
+    /// Static health validation before creating a worker
+    /// This replaces wait_for_worker_health in handlers
+    pub async fn validate_health(url: &str, timeout_secs: u64) -> WorkerResult<()> {
+        use std::time::Instant;
 
-        let response = req_builder
-            .send()
-            .await
-            .map_err(|e| WorkerError::NetworkError {
-                url: url.to_string(),
-                error: e.to_string(),
+        let start_time = Instant::now();
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(|e| WorkerError::InvalidConfiguration {
+                message: format!("Failed to create HTTP client: {}", e),
             })?;
 
-        if !response.status().is_success() {
-            return Err(WorkerError::NetworkError {
-                url: url.to_string(),
-                error: format!("Server returned: {}", response.status()),
-            });
-        }
-
-        let info: serde_json::Value =
-            response
-                .json()
-                .await
-                .map_err(|e| WorkerError::NetworkError {
+        loop {
+            if start_time.elapsed() > timeout {
+                return Err(WorkerError::HealthCheckFailed {
                     url: url.to_string(),
-                    error: format!("Failed to parse JSON: {}", e),
-                })?;
+                    reason: format!(
+                        "Timeout {}s waiting for worker to become healthy",
+                        timeout_secs
+                    ),
+                });
+            }
 
-        let dp_size = info
-            .get("dp_size")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| WorkerError::InvalidConfiguration {
-                message: "dp_size not found in server info".to_string(),
-            })?;
+            match client.get(format!("{}/health", url)).send().await {
+                Ok(res) if res.status().is_success() => {
+                    tracing::info!("Worker {} is healthy", url);
+                    return Ok(());
+                }
+                Ok(res) => {
+                    tracing::warn!(
+                        "Worker {} health check failed with status: {}",
+                        url,
+                        res.status()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to contact worker {}: {}", url, e);
+                }
+            }
 
-        if dp_size > usize::MAX as u64 {
-            return Err(WorkerError::InvalidConfiguration {
-                message: format!("dp_size is too large: {}", dp_size),
-            });
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
-
-        Ok(dp_size as usize)
     }
 }
 
@@ -978,7 +977,6 @@ mod tests {
         use crate::core::BasicWorkerBuilder;
         let worker = BasicWorkerBuilder::new("http://test:8080")
             .worker_type(WorkerType::Regular)
-            .api_key("test_api_key")
             .build();
         assert_eq!(worker.url(), "http://test:8080");
         assert_eq!(worker.worker_type(), WorkerType::Regular);
@@ -1016,7 +1014,6 @@ mod tests {
         let worker = BasicWorkerBuilder::new("http://test:8080")
             .worker_type(WorkerType::Regular)
             .health_config(custom_config.clone())
-            .api_key("test_api_key")
             .build();
 
         assert_eq!(worker.metadata().health_config.timeout_secs, 15);
@@ -1030,7 +1027,6 @@ mod tests {
         use crate::core::BasicWorkerBuilder;
         let worker = BasicWorkerBuilder::new("http://worker1:8080")
             .worker_type(WorkerType::Regular)
-            .api_key("test_api_key")
             .build();
         assert_eq!(worker.url(), "http://worker1:8080");
     }
@@ -1040,7 +1036,6 @@ mod tests {
         use crate::core::BasicWorkerBuilder;
         let regular = BasicWorkerBuilder::new("http://test:8080")
             .worker_type(WorkerType::Regular)
-            .api_key("test_api_key")
             .build();
         assert_eq!(regular.worker_type(), WorkerType::Regular);
 
@@ -1048,7 +1043,6 @@ mod tests {
             .worker_type(WorkerType::Prefill {
                 bootstrap_port: Some(9090),
             })
-            .api_key("test_api_key")
             .build();
         assert_eq!(
             prefill.worker_type(),
@@ -1059,7 +1053,6 @@ mod tests {
 
         let decode = BasicWorkerBuilder::new("http://test:8080")
             .worker_type(WorkerType::Decode)
-            .api_key("test_api_key")
             .build();
         assert_eq!(decode.worker_type(), WorkerType::Decode);
     }
@@ -1088,7 +1081,6 @@ mod tests {
         use crate::core::BasicWorkerBuilder;
         let worker = BasicWorkerBuilder::new("http://test:8080")
             .worker_type(WorkerType::Regular)
-            .api_key("test_api_key")
             .build();
 
         // Initial load is 0
