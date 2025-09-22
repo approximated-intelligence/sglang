@@ -295,6 +295,7 @@ impl WorkerManager {
                     WorkerType::Regular,
                     connection_mode.clone(),
                     config.api_key.clone(),
+                    None,
                     circuit_breaker_config.clone(),
                     health_config.clone(),
                 );
@@ -341,6 +342,7 @@ impl WorkerManager {
                 worker_type,
                 connection_mode.clone(),
                 config.api_key.clone(),
+                None,
                 circuit_breaker_config.clone(),
                 health_config.clone(),
             );
@@ -388,6 +390,7 @@ impl WorkerManager {
                 WorkerType::Decode,
                 connection_mode.clone(),
                 config.api_key.clone(),
+                None,
                 circuit_breaker_config.clone(),
                 health_config.clone(),
             );
@@ -413,6 +416,51 @@ impl WorkerManager {
         config: &WorkerConfigRequest,
         context: &AppContext,
     ) -> Result<String, String> {
+        let mut labels = config.labels.clone();
+
+        // Query server info if model_id not provided
+        let model_id = if let Some(ref model_id) = config.model_id {
+            model_id.clone()
+        } else {
+            match Self::get_server_info(&config.url, config.api_key.as_deref()).await {
+                Ok(info) => {
+                    // Extract model_id from server info with fallbacks
+                    info.model_id
+                        .or_else(|| {
+                            info.model_path
+                                .as_ref()
+                                .and_then(|path| path.split('/').next_back().map(|s| s.to_string()))
+                        })
+                        .unwrap_or_else(|| "unknown".to_string())
+                }
+                Err(e) => {
+                    warn!("Failed to query server info from {}: {}", config.url, e);
+                    "unknown".to_string()
+                }
+            }
+        };
+
+        // Add model_id to labels
+        labels.insert("model_id".to_string(), model_id.clone());
+        if let Some(priority) = config.priority {
+            labels.insert("priority".to_string(), priority.to_string());
+        }
+        if let Some(cost) = config.cost {
+            labels.insert("cost".to_string(), cost.to_string());
+        }
+        if let Some(ref tokenizer_path) = config.tokenizer_path {
+            labels.insert("tokenizer_path".to_string(), tokenizer_path.clone());
+        }
+        if let Some(ref reasoning_parser) = config.reasoning_parser {
+            labels.insert("reasoning_parser".to_string(), reasoning_parser.clone());
+        }
+        if let Some(ref tool_parser) = config.tool_parser {
+            labels.insert("tool_parser".to_string(), tool_parser.clone());
+        }
+        if let Some(ref chat_template) = config.chat_template {
+            labels.insert("chat_template".to_string(), chat_template.clone());
+        }
+
         let worker_type = config
             .worker_type
             .as_ref()
@@ -431,11 +479,16 @@ impl WorkerManager {
             ConnectionMode::Http
         };
 
+        // Extract policy hint from labels if provided
+        let policy_hint = labels.get("policy").cloned();
+
         Self::add_worker_internal(
             &config.url,
             worker_type,
             connection_mode,
             config.api_key.clone(),
+            Some(labels),
+            policy_hint.as_deref(),
             context,
         )
         .await
@@ -452,6 +505,8 @@ impl WorkerManager {
             WorkerType::Regular,
             ConnectionMode::Http,
             api_key.clone(),
+            None,
+            None,
             context,
         )
         .await
@@ -483,6 +538,8 @@ impl WorkerManager {
         worker_type: WorkerType,
         connection_mode: ConnectionMode,
         api_key: Option<String>,
+        labels: Option<HashMap<String, String>>,
+        policy_hint: Option<&str>,
         context: &AppContext,
     ) -> Result<String, String> {
         // Health check the worker first
@@ -527,6 +584,10 @@ impl WorkerManager {
                     builder = builder.api_key(key.clone());
                 }
 
+                if let Some(ref worker_labels) = labels {
+                    builder = builder.labels(worker_labels.clone());
+                }
+
                 let worker = Arc::new(builder.build()) as Arc<dyn Worker>;
 
                 let model_id = worker.model_id().to_string();
@@ -538,7 +599,9 @@ impl WorkerManager {
                     .or_default()
                     .push(worker);
 
-                context.policy_registry.on_worker_added(&model_id, None);
+                context
+                    .policy_registry
+                    .on_worker_added(&model_id, policy_hint);
             }
 
             // Update cache-aware policies
@@ -572,13 +635,16 @@ impl WorkerManager {
                 worker_type,
                 connection_mode,
                 api_key,
+                labels,
                 circuit_breaker_config,
                 health_config,
             );
 
             let model_id = worker.model_id().to_string();
             context.worker_registry.register(worker.clone());
-            context.policy_registry.on_worker_added(&model_id, None);
+            context
+                .policy_registry
+                .on_worker_added(&model_id, policy_hint);
 
             // Update cache-aware policy if applicable
             let workers = context.worker_registry.get_by_model_fast(&model_id);
@@ -680,6 +746,7 @@ impl WorkerManager {
         worker_type: WorkerType,
         connection_mode: ConnectionMode,
         api_key: Option<String>,
+        labels: Option<HashMap<String, String>>,
         circuit_breaker_config: CircuitBreakerConfig,
         health_config: HealthConfig,
     ) -> Arc<dyn Worker> {
@@ -691,6 +758,10 @@ impl WorkerManager {
 
         if let Some(key) = api_key {
             builder = builder.api_key(key);
+        }
+
+        if let Some(worker_labels) = labels {
+            builder = builder.labels(worker_labels);
         }
 
         let worker = builder.build();
