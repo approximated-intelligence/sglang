@@ -288,10 +288,10 @@ struct AddWorkerQuery {
 
 async fn add_worker(
     State(state): State<Arc<AppState>>,
-    Query(AddWorkerQuery { url, api_key: _ }): Query<AddWorkerQuery>,
+    Query(AddWorkerQuery { url, api_key }): Query<AddWorkerQuery>,
 ) -> Response {
     // Use centralized WorkerManager with full context
-    let result = WorkerManager::add_worker(&url, &state.context).await;
+    let result = WorkerManager::add_worker(&url, &api_key, &state.context).await;
 
     match result {
         Ok(message) => (StatusCode::OK, message).into_response(),

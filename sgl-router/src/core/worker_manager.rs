@@ -545,7 +545,7 @@ impl WorkerManager {
     }
 
     /// Add a worker from URL (legacy endpoint)
-    pub async fn add_worker(url: &str, context: &AppContext) -> Result<String, String> {
+    pub async fn add_worker(url: &str, _api_key: &Option<String>, context: &AppContext) -> Result<String, String> {
         Self::add_worker_internal(url, WorkerType::Regular, ConnectionMode::Http, context).await
     }
 
