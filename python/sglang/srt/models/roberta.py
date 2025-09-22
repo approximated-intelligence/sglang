@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 import itertools
 from typing import Iterable, Optional, Tuple
 
@@ -12,6 +13,8 @@ from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.models.bert import BertEncoder
+from sglang.srt.utils_hf import download_from_hf  # SGLang utility
+
 
 RobertaConfig = None
 
@@ -283,4 +286,84 @@ class XLMRobertaForSequenceClassification(nn.Module):
                 weight_loader(param, loaded_weight)
 
 
-EntryClass = [XLMRobertaModel, XLMRobertaForSequenceClassification]
+class XLMRobertaForSparseEmbedding(nn.Module):
+    def __init__(
+        self,
+        *,
+        config,
+        sparse_dim: int,
+        quant_config: Optional[object] = None,
+        prefix: str = "",
+    ):
+        super().__init__()
+        self.roberta = XLMRobertaBaseModel(
+            config=config, quant_config=quant_config, prefix=prefix
+        )
+        # Define sparse projection; actual weights loaded later
+        self.sparse_linear = nn.Linear(config.hidden_size, sparse_dim)
+
+    @torch.no_grad()
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        forward_batch: object,
+        input_embeds: Optional[torch.Tensor] = None,
+        get_embedding: bool = True,
+    ) -> torch.Tensor:
+        assert get_embedding, "SparseEmbedding is only for embedding extraction"
+
+        hidden_states = self.roberta(
+            input_ids, positions, forward_batch, input_embeds, get_embedding
+        )
+
+        # CLS token pooling before projection
+        cls_embedding = hidden_states[:, 0]
+        sparse_embedding = self.sparse_linear(cls_embedding)
+        return sparse_embedding
+
+    def load_weights(
+        self,
+        weights: Iterable[Tuple[str, torch.Tensor]],
+        sparse_linear_path: Optional[str] = None,
+        device: str = "cpu",
+    ):
+        """
+        Load weights for both the encoder and the sparse linear projection.
+        - weights: list of (name, tensor) tuples for the encoder
+        - sparse_linear_path: path to sparse_linear.pt (local or HF repo)
+        """
+        # ---------------- load encoder weights ----------------
+        encoder_weights = [(n[len("roberta."):], w) for n, w in weights if n.startswith("roberta.")]
+        self.roberta.load_weights(encoder_weights)
+
+        # ---------------- load sparse linear weights ----------------
+        if sparse_linear_path:
+            sparse_state_dict = self._load_sparse_linear(sparse_linear_path, device)
+            self.sparse_linear.load_state_dict(sparse_state_dict)
+
+    # ---------------- internal helper ----------------
+    @staticmethod
+    def _load_sparse_linear(model_path_or_dir: str, device="cpu") -> dict:
+        """
+        Load sparse_linear.pt from local dir, file, or HF Hub.
+        Returns a state_dict suitable for nn.Linear.load_state_dict().
+        """
+        if os.path.isdir(model_path_or_dir):
+            path = os.path.join(model_path_or_dir, "sparse_linear.pt")
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"'sparse_linear.pt' not found in {model_path_or_dir}")
+        elif os.path.isfile(model_path_or_dir):
+            path = model_path_or_dir
+            if os.path.basename(path) != "sparse_linear.pt":
+                raise ValueError(f"Expected 'sparse_linear.pt', got {path}")
+        else:
+            # remote → use SGLang HF utility
+            local_dir = download_from_hf(model_path_or_dir, allow_patterns="sparse_linear.pt")
+            path = os.path.join(local_dir, "sparse_linear.pt")
+
+        state_dict = torch.load(path, map_location=device)
+        return state_dict
+
+
+EntryClass = [XLMRobertaModel, XLMRobertaForSequenceClassification, XLMRobertaForSparseEmbedding]
