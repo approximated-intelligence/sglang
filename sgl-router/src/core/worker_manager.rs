@@ -252,16 +252,18 @@ impl WorkerManager {
                         );
 
                         for rank in 0..dp_info.dp_size {
-                            let worker = Self::create_dp_aware_worker(
-                                url.clone(),
-                                rank,
-                                dp_info.dp_size,
-                                WorkerType::Regular,
-                                connection_mode.clone(),
-                                config.api_key.clone(),
-                                circuit_breaker_config.clone(),
-                                health_config.clone(),
-                            );
+                            let mut builder =
+                                DPAwareWorkerBuilder::new(url.clone(), rank, dp_info.dp_size)
+                                    .worker_type(WorkerType::Regular)
+                                    .connection_mode(connection_mode.clone())
+                                    .circuit_breaker_config(circuit_breaker_config.clone())
+                                    .health_config(health_config.clone());
+
+                            if let Some(ref key) = config.api_key {
+                                builder = builder.api_key(key.clone());
+                            }
+
+                            let worker = Arc::new(builder.build()) as Arc<dyn Worker>;
 
                             let model_id = worker.model_id();
                             let worker_id = registry.register(Arc::clone(&worker));
@@ -281,24 +283,10 @@ impl WorkerManager {
                         }
                     }
                     Err(e) => {
-                        warn!(
-                            "Failed to get DP info for {}: {}. Creating as non-DP worker.",
+                        return Err(format!(
+                            "Failed to get DP info for worker {}: {}. DP-aware mode requires all workers to support DP.",
                             url, e
-                        );
-                        let worker = Self::create_basic_worker(
-                            url.clone(),
-                            WorkerType::Regular,
-                            connection_mode.clone(),
-                            config.api_key.clone(),
-                            circuit_breaker_config.clone(),
-                            health_config.clone(),
-                        );
-                        Self::register_worker(
-                            worker,
-                            registry,
-                            &mut registered_workers,
-                            policy_registry,
-                        );
+                        ));
                     }
                 }
             } else {
@@ -338,77 +326,26 @@ impl WorkerManager {
 
         let mut registered_workers: HashMap<String, Vec<Arc<dyn Worker>>> = HashMap::new();
 
+        // TODO: Add proper DP-aware support for prefill workers in PD mode
+        // Currently, DP-aware mode is not fully supported for PD routing
+        if config.dp_aware {
+            warn!("DP-aware mode is not yet supported for prefill workers in PD mode. Creating regular prefill workers instead.");
+        }
+
         for (url, bootstrap_port) in prefill_entries {
             let worker_type = WorkerType::Prefill {
                 bootstrap_port: **bootstrap_port,
             };
-
-            if config.dp_aware {
-                match Self::get_dp_info(url, config.api_key.as_deref()).await {
-                    Ok(dp_info) => {
-                        info!(
-                            "Discovered DP-aware prefill worker {} with size {}",
-                            url, dp_info.dp_size
-                        );
-
-                        for rank in 0..dp_info.dp_size {
-                            let worker = Self::create_dp_aware_worker(
-                                (*url).clone(),
-                                rank,
-                                dp_info.dp_size,
-                                worker_type.clone(),
-                                connection_mode.clone(),
-                                config.api_key.clone(),
-                                circuit_breaker_config.clone(),
-                                health_config.clone(),
-                            );
-
-                            let model_id = worker.model_id();
-                            let worker_id = registry.register(Arc::clone(&worker));
-                            info!(
-                                "Registered DP-aware prefill worker {}@{} with ID {:?}",
-                                url, rank, worker_id
-                            );
-
-                            registered_workers
-                                .entry(model_id.to_string())
-                                .or_default()
-                                .push(Arc::clone(&worker));
-
-                            if let Some(policy_reg) = policy_registry {
-                                policy_reg.on_worker_added(model_id, None);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to get DP info for prefill worker {}: {}. Creating as non-DP worker.", url, e);
-                        let worker = Self::create_basic_worker(
-                            (*url).clone(),
-                            worker_type,
-                            connection_mode.clone(),
-                            config.api_key.clone(),
-                            circuit_breaker_config.clone(),
-                            health_config.clone(),
-                        );
-                        Self::register_worker(
-                            worker,
-                            registry,
-                            &mut registered_workers,
-                            policy_registry,
-                        );
-                    }
-                }
-            } else {
-                let worker = Self::create_basic_worker(
-                    (*url).clone(),
-                    worker_type,
-                    connection_mode.clone(),
-                    config.api_key.clone(),
-                    circuit_breaker_config.clone(),
-                    health_config.clone(),
-                );
-                Self::register_worker(worker, registry, &mut registered_workers, policy_registry);
-            }
+            let worker = Self::create_basic_worker(
+                (*url).clone(),
+                worker_type,
+                connection_mode.clone(),
+                config.api_key.clone(),
+                circuit_breaker_config.clone(),
+                health_config.clone(),
+            );
+            Self::register_worker(worker, registry, &mut registered_workers, policy_registry);
+            //}
         }
 
         // Initialize PD cache-aware policies for prefill workers
@@ -439,73 +376,22 @@ impl WorkerManager {
 
         let mut registered_workers: HashMap<String, Vec<Arc<dyn Worker>>> = HashMap::new();
 
+        // TODO: Add proper DP-aware support for decode workers in PD mode
+        // Currently, DP-aware mode is not fully supported for PD routing
+        if config.dp_aware {
+            warn!("DP-aware mode is not yet supported for decode workers in PD mode. Creating regular decode workers instead.");
+        }
+
         for url in urls {
-            if config.dp_aware {
-                match Self::get_dp_info(url, config.api_key.as_deref()).await {
-                    Ok(dp_info) => {
-                        info!(
-                            "Discovered DP-aware decode worker {} with size {}",
-                            url, dp_info.dp_size
-                        );
-
-                        for rank in 0..dp_info.dp_size {
-                            let worker = Self::create_dp_aware_worker(
-                                url.clone(),
-                                rank,
-                                dp_info.dp_size,
-                                WorkerType::Decode,
-                                connection_mode.clone(),
-                                config.api_key.clone(),
-                                circuit_breaker_config.clone(),
-                                health_config.clone(),
-                            );
-
-                            let model_id = worker.model_id();
-                            let worker_id = registry.register(Arc::clone(&worker));
-                            info!(
-                                "Registered DP-aware decode worker {}@{} with ID {:?}",
-                                url, rank, worker_id
-                            );
-
-                            registered_workers
-                                .entry(model_id.to_string())
-                                .or_default()
-                                .push(Arc::clone(&worker));
-
-                            if let Some(policy_reg) = policy_registry {
-                                policy_reg.on_worker_added(model_id, None);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to get DP info for decode worker {}: {}. Creating as non-DP worker.", url, e);
-                        let worker = Self::create_basic_worker(
-                            url.clone(),
-                            WorkerType::Decode,
-                            connection_mode.clone(),
-                            config.api_key.clone(),
-                            circuit_breaker_config.clone(),
-                            health_config.clone(),
-                        );
-                        Self::register_worker(
-                            worker,
-                            registry,
-                            &mut registered_workers,
-                            policy_registry,
-                        );
-                    }
-                }
-            } else {
-                let worker = Self::create_basic_worker(
-                    url.clone(),
-                    WorkerType::Decode,
-                    connection_mode.clone(),
-                    config.api_key.clone(),
-                    circuit_breaker_config.clone(),
-                    health_config.clone(),
-                );
-                Self::register_worker(worker, registry, &mut registered_workers, policy_registry);
-            }
+            let worker = Self::create_basic_worker(
+                url.clone(),
+                WorkerType::Decode,
+                connection_mode.clone(),
+                config.api_key.clone(),
+                circuit_breaker_config.clone(),
+                health_config.clone(),
+            );
+            Self::register_worker(worker, registry, &mut registered_workers, policy_registry);
         }
 
         // Initialize PD cache-aware policies for decode workers
@@ -631,16 +517,17 @@ impl WorkerManager {
                 }
 
                 let base_url = dp_url.split('@').next().unwrap().to_string();
-                let worker = Self::create_dp_aware_worker(
-                    base_url,
-                    rank,
-                    dp_size_for_base,
-                    worker_type.clone(),
-                    connection_mode.clone(),
-                    api_key.clone(),
-                    circuit_breaker_config.clone(),
-                    health_config.clone(),
-                );
+                let mut builder = DPAwareWorkerBuilder::new(base_url, rank, dp_size_for_base)
+                    .worker_type(worker_type.clone())
+                    .connection_mode(connection_mode.clone())
+                    .circuit_breaker_config(circuit_breaker_config.clone())
+                    .health_config(health_config.clone());
+
+                if let Some(ref key) = api_key {
+                    builder = builder.api_key(key.clone());
+                }
+
+                let worker = Arc::new(builder.build()) as Arc<dyn Worker>;
 
                 let model_id = worker.model_id().to_string();
                 context.worker_registry.register(worker.clone());
@@ -797,31 +684,6 @@ impl WorkerManager {
         health_config: HealthConfig,
     ) -> Arc<dyn Worker> {
         let mut builder = BasicWorkerBuilder::new(url)
-            .worker_type(worker_type)
-            .connection_mode(connection_mode)
-            .circuit_breaker_config(circuit_breaker_config)
-            .health_config(health_config);
-
-        if let Some(key) = api_key {
-            builder = builder.api_key(key);
-        }
-
-        let worker = builder.build();
-        Arc::new(worker) as Arc<dyn Worker>
-    }
-
-    /// Create a DP-aware worker
-    fn create_dp_aware_worker(
-        url: String,
-        rank: usize,
-        size: usize,
-        worker_type: WorkerType,
-        connection_mode: ConnectionMode,
-        api_key: Option<String>,
-        circuit_breaker_config: CircuitBreakerConfig,
-        health_config: HealthConfig,
-    ) -> Arc<dyn Worker> {
-        let mut builder = DPAwareWorkerBuilder::new(url, rank, size)
             .worker_type(worker_type)
             .connection_mode(connection_mode)
             .circuit_breaker_config(circuit_breaker_config)
