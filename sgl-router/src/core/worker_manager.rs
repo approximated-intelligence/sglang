@@ -857,11 +857,18 @@ impl WorkerManager {
             timeout_secs
         );
 
+        // If no workers to wait for, return immediately
+        let workers = registry.get_all();
+        if workers.is_empty() {
+            info!("No workers to wait for, continuing");
+            return Ok(());
+        }
+
         loop {
             let workers = registry.get_all();
             let all_healthy = workers.iter().all(|w| w.is_healthy());
 
-            if all_healthy && !workers.is_empty() {
+            if all_healthy {
                 info!("All {} workers are healthy", workers.len());
                 return Ok(());
             }
@@ -873,14 +880,10 @@ impl WorkerManager {
                     .map(|w| w.url().to_string())
                     .collect();
 
-                if workers.is_empty() {
-                    return Err(format!("No workers registered after {}s", timeout_secs));
-                } else {
-                    return Err(format!(
-                        "Workers failed to become healthy after {}s. Unhealthy: {:?}",
-                        timeout_secs, unhealthy
-                    ));
-                }
+                return Err(format!(
+                    "Workers failed to become healthy after {}s. Unhealthy: {:?}",
+                    timeout_secs, unhealthy
+                ));
             }
 
             let unhealthy_count = workers.iter().filter(|w| !w.is_healthy()).count();
