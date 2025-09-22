@@ -334,6 +334,12 @@ impl Router {
                 }
             };
 
+            // Add bearer token if the worker has an API key
+            if let Some(api_key) = worker.api_key() {
+                request_builder =
+                    request_builder.header("Authorization", format!("Bearer {}", api_key));
+            }
+
             if let Some(hdrs) = headers {
                 for (name, value) in hdrs {
                     let name_lc = name.as_str().to_lowercase();
@@ -428,6 +434,12 @@ impl Router {
         is_stream: bool,
         load_incremented: bool, // Whether load was incremented for this request
     ) -> Response {
+        // Get the worker's API key if available
+        let api_key = self
+            .worker_registry
+            .get_by_url(worker_url)
+            .and_then(|w| w.api_key().clone());
+
         let mut request_builder = if self.dp_aware {
             let (worker_url_prefix, dp_rank) = match Self::extract_dp_rank(worker_url) {
                 Ok(tup) => tup,
@@ -479,6 +491,11 @@ impl Router {
                 .post(format!("{}{}", worker_url, route))
                 .json(typed_req) // Use json() directly with typed request
         };
+
+        // Add bearer token if the worker has an API key
+        if let Some(key) = api_key {
+            request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
+        }
 
         // Copy all headers from original request if provided
         if let Some(headers) = headers {
@@ -961,6 +978,12 @@ impl RouterTrait for Router {
         // Send requests to all workers concurrently without headers
         let mut tasks = Vec::new();
         for worker_url in &worker_urls {
+            // Get the worker's API key if available
+            let api_key = self
+                .worker_registry
+                .get_by_url(worker_url)
+                .and_then(|w| w.api_key().clone());
+
             let worker_url = if self.dp_aware {
                 // Need to extract the URL from "http://host:port@dp_rank"
                 let (worker_url_prefix, _dp_rank) = match Self::extract_dp_rank(worker_url) {
@@ -978,7 +1001,14 @@ impl RouterTrait for Router {
             } else {
                 worker_url
             };
-            let request_builder = self.client.post(format!("{}/flush_cache", worker_url));
+            let mut request_builder = self.client.post(format!("{}/flush_cache", worker_url));
+
+            // Add bearer token if the worker has an API key
+            if let Some(key) = api_key {
+                request_builder =
+                    request_builder.header("Authorization", format!("Bearer {}", key));
+            }
+
             tasks.push(request_builder.send());
         }
 

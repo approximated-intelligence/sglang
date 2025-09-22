@@ -413,8 +413,16 @@ impl Worker for BasicWorker {
                 let health_url = format!("{}{}", url, self.metadata.health_config.endpoint);
                 let timeout = Duration::from_secs(self.metadata.health_config.timeout_secs);
 
-                // Use the shared client with a custom timeout for this request
-                match WORKER_CLIENT.get(&health_url).timeout(timeout).send().await {
+                // Build request with optional bearer token
+                let mut request = WORKER_CLIENT.get(&health_url).timeout(timeout);
+
+                // Add bearer token if API key is configured
+                if let Some(ref api_key) = self.metadata.api_key {
+                    request = request.header("Authorization", format!("Bearer {}", api_key));
+                }
+
+                // Send request and check response
+                match request.send().await {
                     Ok(response) => response.status().is_success(),
                     Err(_) => false,
                 }
@@ -690,6 +698,8 @@ impl WorkerFactory {
                 });
             }
 
+            // Note: This static function doesn't have access to worker's API key
+            // API key authentication is handled in the worker instance's check_health_async method
             match WORKER_CLIENT
                 .get(format!("{}/health", url))
                 .timeout(std::time::Duration::from_secs(5))

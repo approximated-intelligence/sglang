@@ -780,13 +780,21 @@ impl WorkerManager {
                 let w = worker.clone();
                 let url = worker.url().to_string();
                 async move {
+                    // Perform the health check
                     match w.check_health_async().await {
                         Ok(_) => {
-                            debug!("Worker {} passed initial health check", url);
+                            // For initial health check, directly set the worker as healthy
+                            // since check_health_async only updates after reaching threshold
+                            w.set_healthy(true);
+                            debug!(
+                                "Worker {} passed initial health check and marked healthy",
+                                url
+                            );
                             Ok(url)
                         }
                         Err(e) => {
                             warn!("Worker {} failed initial health check: {}", url, e);
+                            // Worker remains unhealthy
                             Err(url)
                         }
                     }
