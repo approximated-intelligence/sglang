@@ -63,6 +63,7 @@ def pool_hidden_states(
         first_token_flat_indices[1:] += torch.cumsum(prompt_lens, dim=0)[:-1]
         return hidden_states[first_token_flat_indices]
     elif pooling_type == PoolingType.MEAN:
+        # use segment_reduce to compute mean pooling
         return torch.segment_reduce(
             data=hidden_states, reduce="mean", lengths=forward_batch.extend_seq_lens
         )
