@@ -36,11 +36,7 @@ pub struct Router {
     policy_registry: Arc<PolicyRegistry>,
     client: Client,
     dp_aware: bool,
-    #[allow(dead_code)]
-    api_key: Option<String>,
     retry_config: RetryConfig,
-    #[allow(dead_code)]
-    circuit_breaker_config: CircuitBreakerConfig,
     _worker_loads: Arc<tokio::sync::watch::Receiver<HashMap<String, isize>>>,
     _load_monitor_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
 }
@@ -113,9 +109,7 @@ impl Router {
             policy_registry: ctx.policy_registry.clone(),
             client: ctx.client.clone(),
             dp_aware: ctx.router_config.dp_aware,
-            api_key: ctx.router_config.api_key.clone(),
             retry_config: ctx.router_config.effective_retry_config(),
-            circuit_breaker_config: core_cb_config,
             _worker_loads: worker_loads,
             _load_monitor_handle: load_monitor_handle,
         })
@@ -128,81 +122,6 @@ impl Router {
         } else {
             Ok(workers[0].url().to_string())
         }
-    }
-
-    #[allow(dead_code)]
-    fn select_first_worker_for_model(&self, model_id: Option<&str>) -> Result<String, String> {
-        let workers = match model_id {
-            Some(model) => self.worker_registry.get_by_model_fast(model),
-            None => self.worker_registry.get_all(),
-        };
-        if workers.is_empty() {
-            Err(format!(
-                "No workers are available for model: {:?}",
-                model_id
-            ))
-        } else {
-            Ok(workers[0].url().to_string())
-        }
-    }
-
-    pub async fn send_health_check(&self, worker_url: &str) -> Response {
-        let health_url = if self.dp_aware {
-            // Need to extract the URL from "http://host:port@dp_rank"
-            match Self::extract_dp_rank(worker_url) {
-                Ok((worker_url_prefix, _dp_rank)) => worker_url_prefix,
-                Err(e) => {
-                    error!("Failed to extract dp_rank for health check: {}", e);
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Failed to extract dp_rank: {}", e),
-                    )
-                        .into_response();
-                }
-            }
-        } else {
-            worker_url
-        };
-
-        let request_builder = self.client.get(format!("{}/health", health_url));
-
-        let response = match request_builder.send().await {
-            Ok(res) => {
-                let status = StatusCode::from_u16(res.status().as_u16())
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-
-                match res.bytes().await {
-                    Ok(body) => (status, body).into_response(),
-                    Err(e) => {
-                        error!(
-                            worker_url = %health_url,
-                            error = %e,
-                            "Failed to read health response body"
-                        );
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            format!("Failed to read response body: {}", e),
-                        )
-                            .into_response()
-                    }
-                }
-            }
-            Err(e) => {
-                error!(
-                    worker_url = %health_url,
-                    error = %e,
-                    "Failed to send health request to worker"
-                );
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to send request to worker {}: {}", health_url, e),
-                )
-                    .into_response()
-            }
-        };
-
-        // Don't record metrics for health checks
-        response
     }
 
     // Helper method to proxy GET requests to the first available worker
@@ -824,7 +743,7 @@ impl Router {
 
     // Static version of get_worker_load for use in monitoring task
     async fn get_worker_load_static(
-        client: &reqwest::Client,
+        client: &Client,
         worker_url: &str,
         api_key: &Option<String>,
     ) -> Option<isize> {
@@ -1172,10 +1091,8 @@ mod tests {
             worker_registry,
             policy_registry,
             dp_aware: false,
-            api_key: None,
             client: Client::new(),
             retry_config: RetryConfig::default(),
-            circuit_breaker_config: CircuitBreakerConfig::default(),
             _worker_loads: Arc::new(rx),
             _load_monitor_handle: None,
         }

@@ -257,6 +257,7 @@ impl WorkerManager {
                                 dp_info.dp_size,
                                 WorkerType::Regular,
                                 connection_mode.clone(),
+                                config.api_key.clone(),
                                 circuit_breaker_config.clone(),
                                 health_config.clone(),
                             );
@@ -287,6 +288,7 @@ impl WorkerManager {
                             url.clone(),
                             WorkerType::Regular,
                             connection_mode.clone(),
+                            config.api_key.clone(),
                             circuit_breaker_config.clone(),
                             health_config.clone(),
                         );
@@ -303,6 +305,7 @@ impl WorkerManager {
                     url.clone(),
                     WorkerType::Regular,
                     connection_mode.clone(),
+                    config.api_key.clone(),
                     circuit_breaker_config.clone(),
                     health_config.clone(),
                 );
@@ -354,6 +357,7 @@ impl WorkerManager {
                                 dp_info.dp_size,
                                 worker_type.clone(),
                                 connection_mode.clone(),
+                                config.api_key.clone(),
                                 circuit_breaker_config.clone(),
                                 health_config.clone(),
                             );
@@ -381,6 +385,7 @@ impl WorkerManager {
                             (*url).clone(),
                             worker_type,
                             connection_mode.clone(),
+                            config.api_key.clone(),
                             circuit_breaker_config.clone(),
                             health_config.clone(),
                         );
@@ -397,6 +402,7 @@ impl WorkerManager {
                     (*url).clone(),
                     worker_type,
                     connection_mode.clone(),
+                    config.api_key.clone(),
                     circuit_breaker_config.clone(),
                     health_config.clone(),
                 );
@@ -448,6 +454,7 @@ impl WorkerManager {
                                 dp_info.dp_size,
                                 WorkerType::Decode,
                                 connection_mode.clone(),
+                                config.api_key.clone(),
                                 circuit_breaker_config.clone(),
                                 health_config.clone(),
                             );
@@ -475,6 +482,7 @@ impl WorkerManager {
                             url.clone(),
                             WorkerType::Decode,
                             connection_mode.clone(),
+                            config.api_key.clone(),
                             circuit_breaker_config.clone(),
                             health_config.clone(),
                         );
@@ -491,6 +499,7 @@ impl WorkerManager {
                     url.clone(),
                     WorkerType::Decode,
                     connection_mode.clone(),
+                    config.api_key.clone(),
                     circuit_breaker_config.clone(),
                     health_config.clone(),
                 );
@@ -535,16 +544,30 @@ impl WorkerManager {
             ConnectionMode::Http
         };
 
-        Self::add_worker_internal(&config.url, worker_type, connection_mode, context).await
+        Self::add_worker_internal(
+            &config.url,
+            worker_type,
+            connection_mode,
+            config.api_key.clone(),
+            context,
+        )
+        .await
     }
 
     /// Add a worker from URL (legacy endpoint)
     pub async fn add_worker(
         url: &str,
-        _api_key: &Option<String>,
+        api_key: &Option<String>,
         context: &AppContext,
     ) -> Result<String, String> {
-        Self::add_worker_internal(url, WorkerType::Regular, ConnectionMode::Http, context).await
+        Self::add_worker_internal(
+            url,
+            WorkerType::Regular,
+            ConnectionMode::Http,
+            api_key.clone(),
+            context,
+        )
+        .await
     }
 
     /// Remove a worker
@@ -572,6 +595,7 @@ impl WorkerManager {
         worker_url: &str,
         worker_type: WorkerType,
         connection_mode: ConnectionMode,
+        api_key: Option<String>,
         context: &AppContext,
     ) -> Result<String, String> {
         // Health check the worker first
@@ -612,6 +636,7 @@ impl WorkerManager {
                     dp_size_for_base,
                     worker_type.clone(),
                     connection_mode.clone(),
+                    api_key.clone(),
                     circuit_breaker_config.clone(),
                     health_config.clone(),
                 );
@@ -658,6 +683,7 @@ impl WorkerManager {
                 worker_url.to_string(),
                 worker_type,
                 connection_mode,
+                api_key,
                 circuit_breaker_config,
                 health_config,
             );
@@ -765,15 +791,21 @@ impl WorkerManager {
         url: String,
         worker_type: WorkerType,
         connection_mode: ConnectionMode,
+        api_key: Option<String>,
         circuit_breaker_config: CircuitBreakerConfig,
         health_config: HealthConfig,
     ) -> Arc<dyn Worker> {
-        let worker = BasicWorkerBuilder::new(url)
+        let mut builder = BasicWorkerBuilder::new(url)
             .worker_type(worker_type)
             .connection_mode(connection_mode)
             .circuit_breaker_config(circuit_breaker_config)
-            .health_config(health_config)
-            .build();
+            .health_config(health_config);
+
+        if let Some(key) = api_key {
+            builder = builder.api_key(key);
+        }
+
+        let worker = builder.build();
         Arc::new(worker) as Arc<dyn Worker>
     }
 
@@ -784,15 +816,21 @@ impl WorkerManager {
         size: usize,
         worker_type: WorkerType,
         connection_mode: ConnectionMode,
+        api_key: Option<String>,
         circuit_breaker_config: CircuitBreakerConfig,
         health_config: HealthConfig,
     ) -> Arc<dyn Worker> {
-        let worker = DPAwareWorkerBuilder::new(url, rank, size)
+        let mut builder = DPAwareWorkerBuilder::new(url, rank, size)
             .worker_type(worker_type)
             .connection_mode(connection_mode)
             .circuit_breaker_config(circuit_breaker_config)
-            .health_config(health_config)
-            .build();
+            .health_config(health_config);
+
+        if let Some(key) = api_key {
+            builder = builder.api_key(key);
+        }
+
+        let worker = builder.build();
         Arc::new(worker) as Arc<dyn Worker>
     }
 
