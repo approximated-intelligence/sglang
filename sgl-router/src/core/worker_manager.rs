@@ -14,13 +14,14 @@ use crate::core::{
 use crate::policies::PolicyRegistry;
 use crate::protocols::worker_spec::WorkerConfigRequest;
 use crate::server::AppContext;
+use futures::future;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 // Global HTTP client for all worker operations
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
@@ -896,32 +897,89 @@ impl WorkerManager {
             return Ok(());
         }
 
+        // Mark all workers as unhealthy initially (they start as healthy by default)
+        // This ensures we don't proceed until they've passed at least one health check
+        info!(
+            "Marking {} workers as unhealthy before initial health checks",
+            workers.len()
+        );
+        for worker in &workers {
+            worker.set_healthy(false);
+        }
+
+        // Perform initial health checks for all workers
+        info!(
+            "Performing initial health checks for {} workers",
+            workers.len()
+        );
+        let health_check_futures: Vec<_> = workers
+            .iter()
+            .map(|worker| {
+                let w = worker.clone();
+                let url = worker.url().to_string();
+                async move {
+                    match w.check_health_async().await {
+                        Ok(_) => {
+                            debug!("Worker {} passed initial health check", url);
+                            Ok(url)
+                        }
+                        Err(e) => {
+                            warn!("Worker {} failed initial health check: {}", url, e);
+                            Err(url)
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        let health_results = future::join_all(health_check_futures).await;
+        let failed_checks: Vec<_> = health_results.into_iter().filter_map(|r| r.err()).collect();
+
+        if !failed_checks.is_empty() {
+            info!(
+                "Initial health check: {} workers failed: {:?}",
+                failed_checks.len(),
+                failed_checks
+            );
+        }
+
         loop {
             let workers = registry.get_all();
-            let all_healthy = workers.iter().all(|w| w.is_healthy());
+            let healthy_workers: Vec<_> = workers
+                .iter()
+                .filter(|w| w.is_healthy())
+                .map(|w| w.url().to_string())
+                .collect();
+            let unhealthy_workers: Vec<_> = workers
+                .iter()
+                .filter(|w| !w.is_healthy())
+                .map(|w| w.url().to_string())
+                .collect();
 
-            if all_healthy {
-                info!("All {} workers are healthy", workers.len());
+            if unhealthy_workers.is_empty() {
+                info!(
+                    "All {} workers are healthy: {:?}",
+                    workers.len(),
+                    healthy_workers
+                );
                 return Ok(());
             }
 
             if start_time.elapsed() > timeout {
-                let unhealthy: Vec<String> = workers
-                    .iter()
-                    .filter(|w| !w.is_healthy())
-                    .map(|w| w.url().to_string())
-                    .collect();
-
+                error!(
+                    "Workers failed to become healthy after {}s. Unhealthy: {:?}, Healthy: {:?}",
+                    timeout_secs, unhealthy_workers, healthy_workers
+                );
                 return Err(format!(
                     "Workers failed to become healthy after {}s. Unhealthy: {:?}",
-                    timeout_secs, unhealthy
+                    timeout_secs, unhealthy_workers
                 ));
             }
 
-            let unhealthy_count = workers.iter().filter(|w| !w.is_healthy()).count();
             info!(
-                "Waiting for {} workers to become healthy...",
-                unhealthy_count
+                "Waiting for {} workers to become healthy. Unhealthy: {:?}",
+                unhealthy_workers.len(),
+                unhealthy_workers
             );
 
             tokio::time::sleep(check_interval).await;

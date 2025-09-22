@@ -3,8 +3,8 @@
 use super::pd_types::api_path;
 use crate::config::types::RetryConfig;
 use crate::core::{
-    is_retryable_status, CircuitBreakerConfig, ConnectionMode, RetryExecutor, Worker,
-    WorkerLoadGuard, WorkerRegistry, WorkerType,
+    is_retryable_status, ConnectionMode, RetryExecutor, Worker, WorkerLoadGuard, WorkerRegistry,
+    WorkerType,
 };
 use crate::metrics::RouterMetrics;
 use crate::policies::{LoadBalancingPolicy, PolicyRegistry};
@@ -42,7 +42,6 @@ pub struct PDRouter {
     pub client: Client,
     pub prefill_client: Client,
     pub retry_config: RetryConfig,
-    pub circuit_breaker_config: CircuitBreakerConfig,
     pub api_key: Option<String>,
     prefill_drain_tx: mpsc::Sender<reqwest::Response>,
 }
@@ -223,15 +222,6 @@ impl PDRouter {
             .map(|w| w.api_key().clone())
             .collect();
 
-        // Convert config CircuitBreakerConfig to core CircuitBreakerConfig
-        let circuit_breaker_config = ctx.router_config.effective_circuit_breaker_config();
-        let core_cb_config = CircuitBreakerConfig {
-            failure_threshold: circuit_breaker_config.failure_threshold,
-            success_threshold: circuit_breaker_config.success_threshold,
-            timeout_duration: Duration::from_secs(circuit_breaker_config.timeout_duration_secs),
-            window_duration: Duration::from_secs(circuit_breaker_config.window_duration_secs),
-        };
-
         // Set up background load monitoring for power-of-two selection
         let (tx, rx) = tokio::sync::watch::channel(HashMap::new());
         let worker_loads = Arc::new(rx);
@@ -353,7 +343,6 @@ impl PDRouter {
             prefill_client,
             prefill_drain_tx,
             retry_config: ctx.router_config.effective_retry_config(),
-            circuit_breaker_config: core_cb_config,
             api_key: ctx.router_config.api_key.clone(),
         })
     }
@@ -1900,7 +1889,6 @@ mod tests {
             prefill_client: Client::new(),
             prefill_drain_tx: mpsc::channel(100).0,
             retry_config: RetryConfig::default(),
-            circuit_breaker_config: CircuitBreakerConfig::default(),
             api_key: Some("test_api_key".to_string()),
         }
     }

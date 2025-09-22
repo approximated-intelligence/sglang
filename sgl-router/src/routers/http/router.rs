@@ -1,7 +1,6 @@
 use crate::config::types::RetryConfig;
 use crate::core::{
-    is_retryable_status, CircuitBreakerConfig, ConnectionMode, RetryExecutor, Worker,
-    WorkerRegistry, WorkerType,
+    is_retryable_status, ConnectionMode, RetryExecutor, Worker, WorkerRegistry, WorkerType,
 };
 use crate::metrics::RouterMetrics;
 use crate::policies::{LoadBalancingPolicy, PolicyRegistry};
@@ -56,15 +55,6 @@ impl Router {
 
         // Get worker URLs for monitoring
         let worker_urls: Vec<String> = workers.iter().map(|w| w.url().to_string()).collect();
-
-        // Convert config CircuitBreakerConfig to core CircuitBreakerConfig
-        let circuit_breaker_config = ctx.router_config.effective_circuit_breaker_config();
-        let core_cb_config = CircuitBreakerConfig {
-            failure_threshold: circuit_breaker_config.failure_threshold,
-            success_threshold: circuit_breaker_config.success_threshold,
-            timeout_duration: Duration::from_secs(circuit_breaker_config.timeout_duration_secs),
-            window_duration: Duration::from_secs(circuit_breaker_config.window_duration_secs),
-        };
 
         // Cache-aware policies are initialized in WorkerInitializer
         // Setup load monitoring for PowerOfTwo policy
