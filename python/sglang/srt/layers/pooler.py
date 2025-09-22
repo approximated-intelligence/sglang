@@ -63,13 +63,26 @@ def pool_hidden_states(
         first_token_flat_indices[1:] += torch.cumsum(prompt_lens, dim=0)[:-1]
         return hidden_states[first_token_flat_indices]
     elif pooling_type == PoolingType.MEAN:
-        prompt_lens = forward_batch.extend_seq_lens
-        end_indices = torch.cumsum(prompt_lens, dim=0) - 1
-        cumulative_hidden_states = torch.cumsum(hidden_states, dim=0)
-        sums = cumulative_hidden_states[end_indices]
-        preceding_sums = torch.zeros_like(sums)
-        preceding_sums[1:] = cumulative_hidden_states[end_indices[:-1]]
-        return (sums - preceding_sums) / prompt_lens.unsqueeze(-1)
+        # Create segment IDs for each token
+        seq_lens = forward_batch.extend_seq_lens
+        segment_ids = torch.repeat_interleave(
+            torch.arange(len(seq_lens), device=hidden_states.device), seq_lens
+        )
+
+        # Use scatter_add to sum embeddings by segment, then divide by lengths
+        pooled_data = torch.zeros(
+            len(seq_lens),
+            hidden_states.size(-1),
+            device=hidden_states.device,
+            dtype=hidden_states.dtype,
+        )
+        pooled_data.scatter_add_(
+            0,
+            segment_ids.unsqueeze(1).expand(-1, hidden_states.size(-1)),
+            hidden_states,
+        )
+        return pooled_data / seq_lens.unsqueeze(1).float()
+
     else:
         raise ValueError(f"Unsupported pooling type: {pooling_type}")
 
