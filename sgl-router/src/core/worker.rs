@@ -679,13 +679,6 @@ impl WorkerFactory {
         let start_time = Instant::now();
         let timeout = std::time::Duration::from_secs(timeout_secs);
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()
-            .map_err(|e| WorkerError::InvalidConfiguration {
-                message: format!("Failed to create HTTP client: {}", e),
-            })?;
-
         loop {
             if start_time.elapsed() > timeout {
                 return Err(WorkerError::HealthCheckFailed {
@@ -697,7 +690,12 @@ impl WorkerFactory {
                 });
             }
 
-            match client.get(format!("{}/health", url)).send().await {
+            match WORKER_CLIENT
+                .get(format!("{}/health", url))
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
                 Ok(res) if res.status().is_success() => {
                     tracing::info!("Worker {} is healthy", url);
                     return Ok(());

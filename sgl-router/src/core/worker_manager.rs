@@ -194,14 +194,8 @@ impl WorkerManager {
                 ..
             } => {
                 // Convert prefill_urls to the format expected by initialize_prefill_workers
-                let bootstrap_ports: Vec<Option<u16>> =
-                    prefill_urls.iter().map(|(_, port)| *port).collect();
-
-                let prefill_entries: Vec<(&String, &Option<u16>)> = prefill_urls
-                    .iter()
-                    .map(|(url, _)| url)
-                    .zip(bootstrap_ports.iter())
-                    .collect();
+                let prefill_entries: Vec<(&String, &Option<u16>)> =
+                    prefill_urls.iter().map(|(url, port)| (url, port)).collect();
 
                 Self::initialize_prefill_workers(
                     &prefill_entries,
@@ -611,7 +605,7 @@ impl WorkerManager {
                     continue;
                 }
 
-                let base_url = dp_url.split('@').next().unwrap_or(dp_url).to_string();
+                let base_url = dp_url.split('@').next().unwrap().to_string();
                 let worker = Self::create_dp_aware_worker(
                     base_url,
                     rank,
