@@ -852,6 +852,27 @@ impl WorkerManager {
                 unhealthy_workers
             );
 
+            let unhealthy_workers_to_check = workers
+                .iter()
+                .filter(|w| !w.is_healthy())
+                .cloned()
+                .collect::<Vec<_>>();
+
+            for worker in unhealthy_workers_to_check {
+                let url = worker.url().to_string();
+                match worker.check_health_async().await {
+                    Ok(_) => {
+                        if !worker.is_healthy() {
+                            worker.set_healthy(true);
+                            debug!("Worker {} now healthy after health check", url);
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Worker {} health check failed: {}", url, e);
+                    }
+                }
+            }
+
             tokio::time::sleep(check_interval).await;
         }
     }
