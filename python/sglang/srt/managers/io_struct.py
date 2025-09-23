@@ -657,6 +657,8 @@ class EmbeddingReqInput:
     modalities: Optional[List[str]] = None
     # For cross-encoder requests
     is_cross_encoder_request: bool = False
+    # For sparse encoder requests
+    return_sparse_representation: bool = False
     # Priority for the request
     priority: Optional[int] = None
 
