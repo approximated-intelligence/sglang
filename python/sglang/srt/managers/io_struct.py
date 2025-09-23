@@ -770,6 +770,8 @@ class TokenizedEmbeddingReqInput:
     dp_balance_id: int = -1
     # Priority for the request
     priority: Optional[int] = None
+    # For sparse encoder requests
+    return_sparse_representation: bool = False
 
 
 @dataclass
