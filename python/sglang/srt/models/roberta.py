@@ -235,6 +235,32 @@ class XLMRobertaModel(nn.Module):
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         self.roberta.load_weights(weights)
 
+    @staticmethod
+    def _load_sparse_linear(model_path_or_dir: str, device="cpu") -> dict:
+        """
+        Load sparse_linear.pt from local dir, file, or HF Hub.
+        Returns a state_dict suitable for nn.Linear.load_state_dict().
+        """
+        if os.path.isdir(model_path_or_dir):
+            path = os.path.join(model_path_or_dir, "sparse_linear.pt")
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"'sparse_linear.pt' not found in {model_path_or_dir}"
+                )
+        elif os.path.isfile(model_path_or_dir):
+            path = model_path_or_dir
+            if os.path.basename(path) != "sparse_linear.pt":
+                raise ValueError(f"Expected 'sparse_linear.pt', got {path}")
+        else:
+            # remote → use SGLang HF utility
+            local_dir = download_from_hf(
+                model_path_or_dir, allow_patterns="sparse_linear.pt"
+            )
+            path = os.path.join(local_dir, "sparse_linear.pt")
+
+        state_dict = torch.load(path, map_location=device)
+        return state_dict
+
 
 class XLMRobertaForSequenceClassification(nn.Module):
     def __init__(
