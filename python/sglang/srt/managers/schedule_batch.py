@@ -449,6 +449,7 @@ class Req:
         session_id: Optional[str] = None,
         custom_logit_processor: Optional[str] = None,
         return_hidden_states: bool = False,
+        return_sparse_representation: bool = False,
         eos_token_ids: Optional[Set[int]] = None,
         bootstrap_host: Optional[str] = None,
         bootstrap_port: Optional[int] = None,
@@ -490,6 +491,7 @@ class Req:
         self.sampling_params = sampling_params
         self.custom_logit_processor = custom_logit_processor
         self.return_hidden_states = return_hidden_states
+        self.return_sparse_representation = return_sparse_representation
 
         # extra key for classifying the request (e.g. lora_id, cache_salt)
         if lora_id is not None:
