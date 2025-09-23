@@ -228,10 +228,19 @@ def _initialize_model(
     quant_config = _get_quantization_config(
         model_config, load_config, packed_modules_mapping
     )
-    return model_class(
-        config=model_config.hf_config,
-        quant_config=quant_config,
-    )
+
+    # Build kwargs conditionally
+    kwargs = {
+        "config": model_config.hf_config,
+        "quant_config": quant_config,
+    }
+
+    # Only add load_sparse_head to kwargs if it is set model_config
+    if getattr(model_config, "load_sparse_head", True):
+        kwargs["load_sparse_head"] = model_config.load_sparse_head
+        print("\n##\n# LOAD SPARSE HEAD FOR REAL\n##\n")
+
+    return model_class(**kwargs)
 
 
 class BaseModelLoader(ABC):
