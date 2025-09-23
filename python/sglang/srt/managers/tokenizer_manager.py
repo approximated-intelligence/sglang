@@ -760,6 +760,7 @@ class TokenizerManager(TokenizerCommunicatorMixin):
                 token_type_ids,
                 sampling_params,
                 priority=obj.priority,
+                return_sparse=obj.return_sparse,
             )
 
         return tokenized_obj
