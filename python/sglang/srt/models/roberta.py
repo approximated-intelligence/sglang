@@ -209,12 +209,15 @@ class XLMRobertaModel(nn.Module):
         config: RobertaConfig,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
+        load_sparse_head: bool = False,
     ):
         super().__init__()
         self.roberta = XLMRobertaBaseModel(
             config=config, quant_config=quant_config, prefix=prefix
         )
         self.pooler = Pooler(pooling_type=PoolingType.CLS, normalize=True)
+        if load_sparse_head:
+            print("\n##\n# LOAD SPARSE HEAD FOR REAL NOW\n##\n")
 
     def forward(
         self,
