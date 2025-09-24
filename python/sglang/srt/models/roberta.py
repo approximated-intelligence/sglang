@@ -266,6 +266,7 @@ class XLMRobertaModel(nn.Module):
             print(type(embeddings.embeddings))
             for token_id in self._special_tokens:
                 embeddings.embeddings[:, token_id] = 0.0
+            embeddings.embeddings = embeddings.embeddings.to_sparse()
 
         return embeddings
 
