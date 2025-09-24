@@ -215,14 +215,14 @@ class XLMRobertaModel(nn.Module):
         load_sparse_head: bool = False,
     ):
         super().__init__()
-        print(
-            "\n".join(
-                f"\n{f.filename}:{f.lineno}\n  in {f.function}({', '.join([f'{a}={vals[a]!r}' for a in args] + ([f'*{varargs}={vals[varargs]!r}'] if varargs else []) + ([f'**{varkw}={vals[varkw]!r}'] if varkw else []))})"
-                for f in inspect.stack()
-                for args, varargs, varkw, vals in [inspect.getargvalues(f.frame)]
-            )
-        )
-        print(config)
+        # print(
+        #     "\n".join(
+        #         f"\n{f.filename}:{f.lineno}\n  in {f.function}({', '.join([f'{a}={vals[a]!r}' for a in args] + ([f'*{varargs}={vals[varargs]!r}'] if varargs else []) + ([f'**{varkw}={vals[varkw]!r}'] if varkw else []))})"
+        #         for f in inspect.stack()
+        #         for args, varargs, varkw, vals in [inspect.getargvalues(f.frame)]
+        #     )
+        # )
+        # print(config)
         self.roberta = XLMRobertaBaseModel(
             config=config, quant_config=quant_config, prefix=prefix
         )
@@ -238,13 +238,13 @@ class XLMRobertaModel(nn.Module):
         input_embeds: torch.Tensor = None,
         get_embedding: bool = False,
     ) -> torch.Tensor:
-        print(
-            "\n".join(
-                f"\n{f.filename}:{f.lineno}\n  in {f.function}({', '.join([f'{a}={vals[a]!r}' for a in args] + ([f'*{varargs}={vals[varargs]!r}'] if varargs else []) + ([f'**{varkw}={vals[varkw]!r}'] if varkw else []))})"
-                for f in inspect.stack()
-                for args, varargs, varkw, vals in [inspect.getargvalues(f.frame)]
-            )
-        )
+        # print(
+        #     "\n".join(
+        #         f"\n{f.filename}:{f.lineno}\n  in {f.function}({', '.join([f'{a}={vals[a]!r}' for a in args] + ([f'*{varargs}={vals[varargs]!r}'] if varargs else []) + ([f'**{varkw}={vals[varkw]!r}'] if varkw else []))})"
+        #         for f in inspect.stack()
+        #         for args, varargs, varkw, vals in [inspect.getargvalues(f.frame)]
+        #     )
+        # )
         hidden_states = self.roberta(
             input_ids, positions, forward_batch, input_embeds, get_embedding
         )
