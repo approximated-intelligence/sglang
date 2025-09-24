@@ -212,7 +212,8 @@ class XLMRobertaModel(nn.Module):
         config: RobertaConfig,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
-        load_sparse_head: bool = False,
+        load_sparse_head: Optional[bool] = None,
+        model_path: Optional[str] = None,
     ):
         super().__init__()
         # print(
@@ -226,9 +227,21 @@ class XLMRobertaModel(nn.Module):
         self.roberta = XLMRobertaBaseModel(
             config=config, quant_config=quant_config, prefix=prefix
         )
-        self.pooler = Pooler(pooling_type=PoolingType.CLS, normalize=True)
         if load_sparse_head:
             print("\n##\n# LOAD SPARSE HEAD FOR REAL NOW\n##\n")
+            self._model_path = model_path
+            self.pooler = SparsePooler(config=config)
+            self._is_sparse = True
+            # Zero out special tokens
+            self._special_tokens = [
+                config.bos_token_id,
+                config.eos_token_id,
+                config.pad_token_id,
+                # self.config.unk_token_id # not available in the XLMRobertaConfig
+            ]
+        else:
+            self.pooler = Pooler(pooling_type=PoolingType.CLS, normalize=True)
+            self._is_sparse = False
 
     def forward(
         self,
@@ -253,8 +266,13 @@ class XLMRobertaModel(nn.Module):
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         self.roberta.load_weights(weights)
 
+        if self._is_sparse:
+            print("\n##\n# LOAD SPARSE WEIGHTS FOR REAL NOW\n##\n")
+            sparse_dict = XLMRobertaModel._load_sparse_linear(self._model_path)
+            self.pooler.load_weights(sparse_dict)
+
     @staticmethod
-    def _load_sparse_linear(model_path_or_dir: str, device="cpu") -> dict:
+    def _load_sparse_linear(model_path_or_dir: str) -> dict:
         """
         Load sparse_linear.pt from local dir, file, or HF Hub.
         Returns a state_dict suitable for nn.Linear.load_state_dict().
@@ -276,7 +294,7 @@ class XLMRobertaModel(nn.Module):
             )
             path = os.path.join(local_dir, "sparse_linear.pt")
 
-        state_dict = torch.load(path, map_location=device)
+        state_dict = torch.load(path)
         return state_dict
 
 
