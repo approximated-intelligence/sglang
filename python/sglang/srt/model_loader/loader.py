@@ -238,6 +238,7 @@ def _initialize_model(
     # Only add load_sparse_head to kwargs if it is set model_config
     if getattr(model_config, "load_sparse_head", True):
         kwargs["load_sparse_head"] = model_config.load_sparse_head
+        kwargs["model_path"] = model_config.model_path
         print("\n##\n# LOAD SPARSE HEAD FOR REAL\n##\n")
 
     return model_class(**kwargs)
