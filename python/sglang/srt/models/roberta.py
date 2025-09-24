@@ -261,7 +261,13 @@ class XLMRobertaModel(nn.Module):
         hidden_states = self.roberta(
             input_ids, positions, forward_batch, input_embeds, get_embedding
         )
-        return self.pooler(hidden_states, forward_batch)
+        embedding = self.pooler(hidden_states, forward_batch)
+
+        if self._is_sparse:
+            for token_id in self._special_tokens:
+                embedding[:, token_id] = 0.0
+
+        return embedding
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         self.roberta.load_weights(weights)
