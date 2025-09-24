@@ -153,7 +153,7 @@ class ServerArgs:
     trust_remote_code: bool = False
     context_length: Optional[int] = None
     is_embedding: bool = False
-    load_sparse_head: bool = False
+    use_bge_m3_sparse: bool = False
     enable_multimodal: Optional[bool] = None
     revision: Optional[str] = None
     model_impl: str = "auto"
@@ -510,8 +510,8 @@ class ServerArgs:
         # Handle deterministic inference.
         self._handle_deterministic_inference()
 
-        # Ensure is_embedding=True if load_sparse_head is set
-        self._handle_load_sparse_head()
+        # Ensure is_embedding=True if use_bge_m3_sparse is set
+        self._handle_use_bge_m3_sparse()
 
         # Handle any other necessary validations.
         self._handle_other_validations()
@@ -1119,9 +1119,8 @@ class ServerArgs:
                 "Currently deterministic inference is only tested on dense models. Please be cautious when using it on MoE models."
             )
 
-    def _handle_load_sparse_head(self):
-        if self.load_sparse_head:
-            print("\n##\n# LOAD SPARSE HEAD\n##\n")
+    def _handle_use_bge_m3_sparse(self):
+        if self.use_bge_m3_sparse:
             self.is_embedding = True
 
     def _handle_other_validations(self):
@@ -1209,7 +1208,7 @@ class ServerArgs:
             help="Whether to use a CausalLM as an embedding model.",
         )
         parser.add_argument(
-            "--load-sparse-head",
+            "--use-bge-m3-sparse",
             action="store_true",
             help="Whether to use the sparse head of an embedding model.",
         )

@@ -212,7 +212,7 @@ class XLMRobertaModel(nn.Module):
         config: RobertaConfig,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
-        load_sparse_head: Optional[bool] = None,
+        use_bge_m3_sparse: Optional[bool] = None,
         model_path: Optional[str] = None,
     ):
         super().__init__()
@@ -227,8 +227,7 @@ class XLMRobertaModel(nn.Module):
         self.roberta = XLMRobertaBaseModel(
             config=config, quant_config=quant_config, prefix=prefix
         )
-        if load_sparse_head:
-            print("\n##\n# LOAD SPARSE HEAD FOR REAL NOW\n##\n")
+        if use_bge_m3_sparse:
             self._model_path = model_path
             self.pooler = SparsePooler(config=config)
             self._is_sparse = True
@@ -261,19 +260,19 @@ class XLMRobertaModel(nn.Module):
         hidden_states = self.roberta(
             input_ids, positions, forward_batch, input_embeds, get_embedding
         )
-        embedding = self.pooler(hidden_states, forward_batch)
+        embeddings = self.pooler(hidden_states, forward_batch)
 
         if self._is_sparse:
+            print(type(embeddings.embeddings))
             for token_id in self._special_tokens:
-                embedding[:, token_id] = 0.0
+                embeddings.embeddings[:, token_id] = 0.0
 
-        return embedding
+        return embeddings
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         self.roberta.load_weights(weights)
 
         if self._is_sparse:
-            print("\n##\n# LOAD SPARSE WEIGHTS FOR REAL NOW\n##\n")
             sparse_dict = XLMRobertaModel._load_sparse_linear(self._model_path)
             self.pooler.load_weights(sparse_dict)
 

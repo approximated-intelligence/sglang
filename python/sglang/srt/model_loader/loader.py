@@ -235,11 +235,10 @@ def _initialize_model(
         "quant_config": quant_config,
     }
 
-    # Only add load_sparse_head to kwargs if it is set model_config
-    if getattr(model_config, "load_sparse_head", True):
-        kwargs["load_sparse_head"] = model_config.load_sparse_head
+    # Only add use_bge_m3_sparse to kwargs if it is set model_config
+    if getattr(model_config, "use_bge_m3_sparse", True):
+        kwargs["use_bge_m3_sparse"] = model_config.use_bge_m3_sparse
         kwargs["model_path"] = model_config.model_path
-        print("\n##\n# LOAD SPARSE HEAD FOR REAL\n##\n")
 
     return model_class(**kwargs)
 
