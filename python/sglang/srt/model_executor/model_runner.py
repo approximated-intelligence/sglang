@@ -346,23 +346,6 @@ class ModelRunner:
             if architectures and not any("Llama4" in arch for arch in architectures):
                 self.is_hybrid = self.model_config.is_hybrid = True
 
-        if self.is_hybrid_gdn:
-            if self.server_args.max_mamba_cache_size is None:
-                if self.server_args.max_running_requests is not None:
-                    self.server_args.max_mamba_cache_size = (
-                        self.server_args.max_running_requests
-                    )
-                else:
-                    self.server_args.max_mamba_cache_size = 512
-            self.server_args.max_mamba_cache_size = (
-                self.server_args.max_mamba_cache_size
-                // (
-                    self.server_args.dp_size
-                    if self.server_args.enable_dp_attention
-                    else 1
-                )
-            )
-
         # For MTP models like DeepSeek-V3 or GLM-4.5, the MTP layer(s) are used separately as draft
         # models for speculative decoding. In those cases, `num_nextn_predict_layers` is used to
         # determine the number of layers.
@@ -1278,13 +1261,43 @@ class ModelRunner:
             1 - self.mem_fraction_static
         )
         if self.is_hybrid_gdn:
-            rest_memory -= (
-                self.server_args.max_mamba_cache_size
-                * self.model_config.hf_config.mamba_cache_per_req
-                / (1 << 30)
-            )
+            rest_memory = self.handle_hybrid_gdn_memory(rest_memory)
         max_num_token = int(rest_memory * (1 << 30) // cell_size)
         return max_num_token
+
+    def handle_hybrid_gdn_memory(self, total_rest_memory):
+        if self.server_args.disable_radix_cache:
+            if self.server_args.max_mamba_cache_size is None:
+                if self.server_args.max_running_requests is not None:
+                    self.server_args.max_mamba_cache_size = (
+                        self.server_args.max_running_requests
+                    )
+                else:
+                    self.server_args.max_mamba_cache_size = 512
+        else:
+            # allocate the memory based on the ratio between mamba state memory vs. full kv cache memory
+            # solve the equations:
+            # 1. mamba_state_memory + full_kv_cache_memory == total_rest_memory
+            # 2. mamba_state_memory / full_kv_cache_memory == self.server_args.mamba_full_memory_ratio
+            mamba_state_memory_raw = total_rest_memory * self.server_args.mamba_full_memory_ratio / (1 + self.server_args.mamba_full_memory_ratio)
+            # calculate the max_mamba_cache_size based on the given total mamba memory
+            self.server_args.max_mamba_cache_size = mamba_state_memory_raw * (1 << 30) // self.model_config.hf_config.mamba_cache_per_req
+        
+        # TODO: understand why divide by dp_size
+        self.server_args.max_mamba_cache_size = (
+            self.server_args.max_mamba_cache_size
+            // (
+                self.server_args.dp_size
+                if self.server_args.enable_dp_attention
+                else 1
+            )
+        )
+        mamba_state_memory = (
+            self.server_args.max_mamba_cache_size
+            * self.model_config.hf_config.mamba_cache_per_req
+            / (1 << 30)
+        )
+        return total_rest_memory - mamba_state_memory
 
     @property
     def is_hybrid_gdn(self):
@@ -1427,9 +1440,9 @@ class ModelRunner:
                 ),
                 4096,
             )
-        if self.is_hybrid_gdn:
+        if self.is_hybrid_gdn and not self.server_args.disable_radix_cache:
             # for mamba cache radix, it need be divided by 3 (magic number now). (yizhang2077)
-            max_num_reqs = min(max_num_reqs, self.server_args.max_mamba_cache_size // 3)
+            assert max_num_reqs < self.server_args.max_mamba_cache_size // 3, f"max_num_reqs={max_num_reqs} needs to be less than mamba_cache_size={self.server_args.max_mamba_cache_size} // 3, try to increase --mamba-full-memory-ratio"
 
         if self.spec_algorithm.is_eagle() or self.spec_algorithm.is_standalone():
             if self.is_draft_worker:

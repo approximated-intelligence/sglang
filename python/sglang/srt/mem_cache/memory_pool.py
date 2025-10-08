@@ -264,6 +264,9 @@ class HybridReqToTokenPool(ReqToTokenPool):
         self.req_index_to_mamba_index_mapping: torch.Tensor = torch.zeros(
             size, dtype=torch.int32, device=self.device
         )
+        logger.info(
+            f"Use Hybrid memory pool. full_layer_tokens={size}, mamba_size={mamba_size}"
+        )
 
     # For chunk prefill req, we do not need to allocate mamba cache,
     # We could use allocated mamba cache instead.
