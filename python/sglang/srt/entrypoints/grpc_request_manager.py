@@ -323,23 +323,19 @@ class GrpcRequestManager:
                     await self.abort_request(request_id)
                     return
 
-                try:
-                    response = await asyncio.wait_for(state.out_queue.get(), timeout=4)
+                # Wait for response without timeout - let router/client control timeout
+                response = await state.out_queue.get()
 
-                    if is_stream:
-                        yield response
+                if is_stream:
+                    yield response
 
-                    # Non-streaming: yield final response with accumulated tokens from state
-                    if isinstance(response, dict) and response.get("finished", False):
-                        if not is_stream:
-                            final_response = response.copy()
-                            final_response["token_ids"] = state.output_ids
-                            yield final_response
-                        break
-
-                except asyncio.TimeoutError:
-                    # Timeout is just a polling interval - continue waiting
-                    continue
+                # Non-streaming: yield final response with accumulated tokens from state
+                if isinstance(response, dict) and response.get("finished", False):
+                    if not is_stream:
+                        final_response = response.copy()
+                        final_response["token_ids"] = state.output_ids
+                        yield final_response
+                    break
 
         finally:
             # Always clean up request state when exiting
