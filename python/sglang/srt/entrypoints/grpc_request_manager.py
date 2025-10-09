@@ -338,12 +338,8 @@ class GrpcRequestManager:
                         break
 
                 except asyncio.TimeoutError:
-                    # Timeout waiting for response - abort and cleanup
-                    logger.warning(
-                        f"Timeout waiting for response for request {request_id}"
-                    )
-                    await self.abort_request(request_id)
-                    return
+                    # Timeout is just a polling interval - continue waiting
+                    continue
 
         finally:
             # Always clean up request state when exiting
