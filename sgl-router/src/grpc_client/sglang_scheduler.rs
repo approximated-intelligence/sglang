@@ -44,7 +44,6 @@ impl SglangSchedulerClient {
             .http2_adaptive_window(true)
             .initial_stream_window_size(Some(16 * 1024 * 1024)) // 16MB
             .initial_connection_window_size(Some(32 * 1024 * 1024)) // 32MB
-            .max_concurrent_streams(Some(1000)) // Allow 1000 concurrent streams per connection
             .connect()
             .await?;
 

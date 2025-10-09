@@ -459,11 +459,14 @@ pub async fn concurrency_limit_middleware(
 
     // Try to acquire token immediately
     if token_bucket.try_acquire(1.0).await.is_ok() {
-        debug!("Acquired token immediately");
+        let request_path = request.uri().path().to_string();
+        debug!("[CONCURRENCY] Token acquired for {}", request_path);
         let response = next.run(request).await;
+        debug!("[CONCURRENCY] Handler completed for {}, returning token", request_path);
 
         // Return the token to the bucket
         token_bucket.return_tokens(1.0).await;
+        debug!("[CONCURRENCY] Token returned for {}", request_path);
 
         response
     } else {
