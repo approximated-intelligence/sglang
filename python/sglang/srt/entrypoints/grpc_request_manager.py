@@ -318,12 +318,7 @@ class GrpcRequestManager:
             is_stream = getattr(obj, "stream", False)
 
             while True:
-                # Client cancelled - notify scheduler and exit
-                if grpc_context and grpc_context.cancelled():
-                    await self.abort_request(request_id)
-                    return
-
-                # Wait for response without timeout - let router/client control timeout
+                # Wait for response from scheduler
                 response = await state.out_queue.get()
 
                 if is_stream:
@@ -345,6 +340,7 @@ class GrpcRequestManager:
         """Clean up local request state (does not notify scheduler)."""
         if request_id in self.rid_to_state:
             del self.rid_to_state[request_id]
+            logger.info(f"[CLEANUP] Cleaned up {request_id}, remaining active requests: {len(self.rid_to_state)}")
 
     async def embedding_request(
         self,
