@@ -92,6 +92,44 @@ def _popen_launch_router(
     return proc
 
 
+def popen_launch_grpc_router(
+    model: str,
+    base_url: str,
+    timeout: float,
+    api_key: str | None = None,
+    other_args: list[str] | None = None,
+) -> subprocess.Popen:
+    """
+    Launch gRPC router with workers using sglang_router.launch_server.
+    """
+    host, port = _parse_url(base_url)
+
+    cmd = [
+        "python3",
+        "-m",
+        "sglang_router.launch_server",
+        "--model-path",
+        model,
+        "--host",
+        host,
+        "--port",
+        port,
+        "--grpc-mode",
+    ]
+
+    if other_args:
+        cmd.extend(other_args)
+
+    if api_key:
+        cmd.extend(["--api-key", api_key])
+
+    print(f"Launching gRPC router: {' '.join(cmd)}")
+
+    proc = subprocess.Popen(cmd)
+    _wait_router_health(base_url, timeout)
+    return proc
+
+
 def _popen_launch_worker(
     model: str,
     base_url: str,

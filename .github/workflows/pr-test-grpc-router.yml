@@ -1,0 +1,114 @@
+name: PR Test (gRPC Router Function Calling)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'sgl-router/**'
+      - 'python/sglang/srt/entrypoints/grpc_server.py'
+      - '.github/workflows/pr-test-grpc-router.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'sgl-router/**'
+      - 'python/sglang/srt/entrypoints/grpc_server.py'
+      - '.github/workflows/pr-test-grpc-router.yml'
+    types: [synchronize, labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: test-grpc-router-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  grpc-function-calling-tests:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-ci')
+    runs-on: 1-gpu-runner
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Setup Rust
+      run: |
+        bash scripts/ci/ci_install_rust.sh
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          sgl-router/target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('sgl-router/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('python/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install SGLang dependencies
+      run: |
+        bash scripts/ci/ci_install_dependency.sh
+
+    - name: Build and install sgl-router
+      run: |
+        source "$HOME/.cargo/env"
+        cd sgl-router
+        cargo build && python3 -m build && pip install --force-reinstall dist/*.whl
+
+    - name: Run gRPC function calling tests
+      timeout-minutes: 20
+      run: |
+        cd sgl-router
+        python3 -m pytest py_test/e2e/test_grpc_function_calling.py -v --tb=short
+
+    - name: Run gRPC tool choice tests
+      timeout-minutes: 20
+      run: |
+        cd sgl-router
+        python3 -m pytest py_test/e2e/test_grpc_tool_choice.py -v --tb=short
+
+    - name: Upload test results on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: grpc-test-logs
+        path: |
+          sgl-router/py_test/e2e/*.log
+          /tmp/sglang-*.log
+
+  test-finish:
+    needs: [grpc-function-calling-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check test status
+        run: |
+          if [[ "${{ needs.grpc-function-calling-tests.result }}" == "failure" ]]; then
+            echo "gRPC function calling tests failed"
+            exit 1
+          elif [[ "${{ needs.grpc-function-calling-tests.result }}" == "cancelled" ]]; then
+            echo "gRPC function calling tests were cancelled"
+            exit 1
+          fi
+          echo "✅ All gRPC router tests completed successfully"
+          exit 0
