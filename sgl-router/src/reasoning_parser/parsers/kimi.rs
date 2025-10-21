@@ -38,15 +38,20 @@ impl Default for KimiParser {
 }
 
 impl ReasoningParser for KimiParser {
-    fn detect_and_parse_reasoning(&mut self, text: &str) -> Result<ParserResult, ParseError> {
-        self.base.detect_and_parse_reasoning(text)
+    fn detect_and_parse_reasoning(
+        &mut self,
+        text: &str,
+        token_ids: &[u32],
+    ) -> Result<ParserResult, ParseError> {
+        self.base.detect_and_parse_reasoning(text, token_ids)
     }
 
     fn parse_reasoning_streaming_incremental(
         &mut self,
         text: &str,
+        token_ids: &[u32],
     ) -> Result<ParserResult, ParseError> {
-        self.base.parse_reasoning_streaming_incremental(text)
+        self.base.parse_reasoning_streaming_incremental(text, token_ids)
     }
 
     fn reset(&mut self) {
@@ -72,7 +77,7 @@ mod tests {
 
         // Should NOT treat text as reasoning without start token
         let result = parser
-            .detect_and_parse_reasoning("This is normal content")
+            .detect_and_parse_reasoning("This is normal content", &[])
             .unwrap();
         assert_eq!(result.normal_text, "This is normal content");
         assert_eq!(result.reasoning_text, "");
@@ -84,7 +89,7 @@ mod tests {
 
         // Should extract reasoning with Unicode tokens
         let result = parser
-            .detect_and_parse_reasoning("◁think▷reasoning content◁/think▷answer")
+            .detect_and_parse_reasoning("◁think▷reasoning content◁/think▷answer", &[])
             .unwrap();
         assert_eq!(result.normal_text, "answer");
         assert_eq!(result.reasoning_text, "reasoning content");
@@ -95,14 +100,14 @@ mod tests {
         let mut parser = KimiParser::new();
 
         let result1 = parser
-            .parse_reasoning_streaming_incremental("◁thi")
+            .parse_reasoning_streaming_incremental("◁thi", &[])
             .unwrap();
         assert_eq!(result1.normal_text, "");
         assert_eq!(result1.reasoning_text, "");
 
         // Complete the token
         let result2 = parser
-            .parse_reasoning_streaming_incremental("nk▷reasoning")
+            .parse_reasoning_streaming_incremental("nk▷reasoning", &[])
             .unwrap();
         assert_eq!(result2.normal_text, "");
         assert_eq!(result2.reasoning_text, "reasoning");
@@ -114,21 +119,21 @@ mod tests {
 
         // Normal text first
         let result1 = parser
-            .parse_reasoning_streaming_incremental("normal ")
+            .parse_reasoning_streaming_incremental("normal ", &[])
             .unwrap();
         assert_eq!(result1.normal_text, "normal ");
         assert_eq!(result1.reasoning_text, "");
 
         // Enter reasoning with Unicode token
         let result2 = parser
-            .parse_reasoning_streaming_incremental("◁think▷thinking")
+            .parse_reasoning_streaming_incremental("◁think▷thinking", &[])
             .unwrap();
         assert_eq!(result2.normal_text, "");
         assert_eq!(result2.reasoning_text, "thinking");
 
         // Exit reasoning
         let result3 = parser
-            .parse_reasoning_streaming_incremental("◁/think▷answer")
+            .parse_reasoning_streaming_incremental("◁/think▷answer", &[])
             .unwrap();
         assert_eq!(result3.normal_text, "answer");
         assert_eq!(result3.reasoning_text, ""); // Already returned in stream mode

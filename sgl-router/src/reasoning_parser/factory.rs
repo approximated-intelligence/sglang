@@ -10,8 +10,8 @@ use tokio::sync::Mutex;
 
 use crate::reasoning_parser::{
     parsers::{
-        BaseReasoningParser, DeepSeekR1Parser, Glm45Parser, KimiParser, Qwen3Parser,
-        QwenThinkingParser, Step3Parser,
+        BaseReasoningParser, DeepSeekR1Parser, Glm45Parser, GptOssHarmonyReasoningParser,
+        KimiParser, Qwen3Parser, QwenThinkingParser, Step3Parser,
     },
     traits::{ParseError, ParserConfig, ReasoningParser},
 };
@@ -189,7 +189,13 @@ impl ParserFactory {
         // Register Step3 parser (same format as DeepSeek-R1 but separate for debugging)
         registry.register_parser("step3", || Box::new(Step3Parser::new()));
 
+        // Register GPT-OSS Harmony parser (token-level parsing with analysis/final channels)
+        registry.register_parser("gpt_oss_harmony", || {
+            Box::new(GptOssHarmonyReasoningParser::new().expect("Failed to create Harmony parser"))
+        });
+
         // Register model patterns
+        registry.register_pattern("gpt-oss", "gpt_oss_harmony");  // GPT-OSS models use Harmony
         registry.register_pattern("deepseek-r1", "deepseek_r1");
         registry.register_pattern("qwen3-thinking", "qwen3_thinking");
         registry.register_pattern("qwen-thinking", "qwen3_thinking");
@@ -359,7 +365,7 @@ mod tests {
             let handle = tokio::spawn(async move {
                 let mut parser = parser_clone.lock().await;
                 let input = format!("thread {} reasoning</think>answer", i);
-                let result = parser.detect_and_parse_reasoning(&input).unwrap();
+                let result = parser.detect_and_parse_reasoning(&input, &[]).unwrap();
                 assert_eq!(result.normal_text, "answer");
                 assert!(result.reasoning_text.contains("reasoning"));
             });
@@ -470,7 +476,7 @@ mod tests {
 
                     let input = format!("<think>{}</think>{}", reasoning_text, answer_text);
 
-                    match p.detect_and_parse_reasoning(&input) {
+                    match p.detect_and_parse_reasoning(&input, &[]) {
                         Ok(result) => {
                             // Note: Some parsers with stream_reasoning=true won't accumulate reasoning text
                             assert!(result.normal_text.contains(&format!("task {}", task_id)));

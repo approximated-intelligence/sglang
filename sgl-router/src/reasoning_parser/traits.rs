@@ -48,18 +48,31 @@ pub trait ReasoningParser: Send + Sync {
     /// This method is used for non-streaming scenarios where the complete
     /// text is available at once.
     ///
+    /// # Arguments
+    /// * `text` - The decoded text string (for text-based parsers)
+    /// * `token_ids` - The raw token IDs from the backend (for token-based parsers like Harmony)
+    ///
     /// Returns an error if the text exceeds buffer limits or contains invalid UTF-8.
-    fn detect_and_parse_reasoning(&mut self, text: &str) -> Result<ParserResult, ParseError>;
+    fn detect_and_parse_reasoning(
+        &mut self,
+        text: &str,
+        token_ids: &[u32],
+    ) -> Result<ParserResult, ParseError>;
 
     /// Parses reasoning incrementally from streaming input.
     ///
     /// This method maintains internal state across calls to handle partial
     /// tokens and chunk boundaries correctly.
     ///
+    /// # Arguments
+    /// * `text` - The decoded text string (for text-based parsers)
+    /// * `token_ids` - The raw token IDs from the backend (for token-based parsers like Harmony)
+    ///
     /// Returns an error if the buffer exceeds max_buffer_size.
     fn parse_reasoning_streaming_incremental(
         &mut self,
         text: &str,
+        token_ids: &[u32],
     ) -> Result<ParserResult, ParseError>;
 
     /// Reset the parser state for reuse.

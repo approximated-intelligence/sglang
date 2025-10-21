@@ -39,15 +39,20 @@ impl Default for DeepSeekR1Parser {
 }
 
 impl ReasoningParser for DeepSeekR1Parser {
-    fn detect_and_parse_reasoning(&mut self, text: &str) -> Result<ParserResult, ParseError> {
-        self.base.detect_and_parse_reasoning(text)
+    fn detect_and_parse_reasoning(
+        &mut self,
+        text: &str,
+        token_ids: &[u32],
+    ) -> Result<ParserResult, ParseError> {
+        self.base.detect_and_parse_reasoning(text, token_ids)
     }
 
     fn parse_reasoning_streaming_incremental(
         &mut self,
         text: &str,
+        token_ids: &[u32],
     ) -> Result<ParserResult, ParseError> {
-        self.base.parse_reasoning_streaming_incremental(text)
+        self.base.parse_reasoning_streaming_incremental(text, token_ids)
     }
 
     fn reset(&mut self) {
@@ -73,7 +78,7 @@ mod tests {
 
         // Should treat text as reasoning even without start token
         let result = parser
-            .detect_and_parse_reasoning("This is reasoning content")
+            .detect_and_parse_reasoning("This is reasoning content", &[])
             .unwrap();
         assert_eq!(result.normal_text, "");
         assert_eq!(result.reasoning_text, "This is reasoning content");
@@ -85,7 +90,7 @@ mod tests {
 
         // Should extract reasoning until end token
         let result = parser
-            .detect_and_parse_reasoning("reasoning content</think>normal content")
+            .detect_and_parse_reasoning("reasoning content</think>normal content", &[])
             .unwrap();
         assert_eq!(result.normal_text, "normal content");
         assert_eq!(result.reasoning_text, "reasoning content");
@@ -97,14 +102,14 @@ mod tests {
 
         // First chunk - all reasoning
         let result1 = parser
-            .parse_reasoning_streaming_incremental("thinking about")
+            .parse_reasoning_streaming_incremental("thinking about", &[])
             .unwrap();
         assert_eq!(result1.reasoning_text, "thinking about");
         assert_eq!(result1.normal_text, "");
 
         // Second chunk - ends reasoning
         let result2 = parser
-            .parse_reasoning_streaming_incremental(" the problem</think>answer")
+            .parse_reasoning_streaming_incremental(" the problem</think>answer", &[])
             .unwrap();
         assert_eq!(result2.reasoning_text, "the problem"); // Text is trimmed
         assert_eq!(result2.normal_text, "answer");

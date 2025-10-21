@@ -44,7 +44,11 @@ impl BaseReasoningParser {
 }
 
 impl ReasoningParser for BaseReasoningParser {
-    fn detect_and_parse_reasoning(&mut self, text: &str) -> Result<ParserResult, ParseError> {
+    fn detect_and_parse_reasoning(
+        &mut self,
+        text: &str,
+        _token_ids: &[u32],
+    ) -> Result<ParserResult, ParseError> {
         // Check input size against buffer limit
         if text.len() > self.config.max_buffer_size {
             return Err(ParseError::BufferOverflow(text.len()));
@@ -83,6 +87,7 @@ impl ReasoningParser for BaseReasoningParser {
     fn parse_reasoning_streaming_incremental(
         &mut self,
         text: &str,
+        _token_ids: &[u32],
     ) -> Result<ParserResult, ParseError> {
         // Check if adding this text would exceed buffer limit
         if self.buffer.len() + text.len() > self.config.max_buffer_size {
@@ -187,7 +192,7 @@ mod tests {
     fn test_detect_and_parse_reasoning() {
         let mut parser = create_test_parser(false, true);
         let result = parser
-            .detect_and_parse_reasoning("<think>with reasoning</think> and more text.")
+            .detect_and_parse_reasoning("<think>with reasoning</think> and more text.", &[])
             .unwrap();
         assert_eq!(result.normal_text, "and more text.");
         assert_eq!(result.reasoning_text, "with reasoning");
@@ -197,7 +202,7 @@ mod tests {
     fn test_detect_and_parse_no_reasoning() {
         let mut parser = create_test_parser(false, true);
         let result = parser
-            .detect_and_parse_reasoning("This is a test without reasoning.")
+            .detect_and_parse_reasoning("This is a test without reasoning.", &[])
             .unwrap();
         assert_eq!(result.normal_text, "This is a test without reasoning.");
         assert_eq!(result.reasoning_text, "");
@@ -207,7 +212,7 @@ mod tests {
     fn test_detect_and_parse_truncated_reasoning() {
         let mut parser = create_test_parser(false, true);
         let result = parser
-            .detect_and_parse_reasoning("<think>with truncated reasoning")
+            .detect_and_parse_reasoning("<think>with truncated reasoning", &[])
             .unwrap();
         assert_eq!(result.normal_text, "");
         assert_eq!(result.reasoning_text, "with truncated reasoning");
@@ -217,7 +222,7 @@ mod tests {
     fn test_parse_streaming_partial_token() {
         let mut parser = create_test_parser(false, true);
         let result = parser
-            .parse_reasoning_streaming_incremental("<thi")
+            .parse_reasoning_streaming_incremental("<thi", &[])
             .unwrap();
         assert_eq!(result.normal_text, "");
         assert_eq!(result.reasoning_text, "");
@@ -227,7 +232,7 @@ mod tests {
     fn test_parse_streaming_complete() {
         let mut parser = create_test_parser(false, true);
         let result = parser
-            .parse_reasoning_streaming_incremental("<think>with reasoning</think> and more text.")
+            .parse_reasoning_streaming_incremental("<think>with reasoning</think> and more text.", &[])
             .unwrap();
         assert_eq!(result.normal_text, " and more text.");
         assert_eq!(result.reasoning_text, "with reasoning");
@@ -237,7 +242,7 @@ mod tests {
     fn test_parse_streaming_no_end_token() {
         let mut parser = create_test_parser(true, true);
         let result = parser
-            .parse_reasoning_streaming_incremental("<think>with reasoning")
+            .parse_reasoning_streaming_incremental("<think>with reasoning", &[])
             .unwrap();
         assert_eq!(result.normal_text, "");
         assert_eq!(result.reasoning_text, "with reasoning");
@@ -248,7 +253,7 @@ mod tests {
         // Parser starts with in_reasoning=true (like DeepSeek-R1)
         let mut parser = create_test_parser(true, true);
         let result = parser
-            .detect_and_parse_reasoning("no think tags here")
+            .detect_and_parse_reasoning("no think tags here", &[])
             .unwrap();
         assert_eq!(result.normal_text, "");
         assert_eq!(result.reasoning_text, "no think tags here");
@@ -260,14 +265,14 @@ mod tests {
         let mut parser = create_test_parser(false, true);
 
         // Step 1: Send partial end tag when not in reasoning mode
-        let result1 = parser.parse_reasoning_streaming_incremental("</").unwrap();
+        let result1 = parser.parse_reasoning_streaming_incremental("</", &[]).unwrap();
         assert_eq!(result1.normal_text, "");
         assert_eq!(result1.reasoning_text, "");
 
         // Step 2: Send normal text that doesn't complete the end tag
         // Must return "</answer" not just "answer"
         let result2 = parser
-            .parse_reasoning_streaming_incremental("answer")
+            .parse_reasoning_streaming_incremental("answer", &[])
             .unwrap();
         assert_eq!(result2.normal_text, "</answer");
         assert_eq!(result2.reasoning_text, "");
@@ -279,21 +284,21 @@ mod tests {
 
         // Start reasoning block
         let result1 = parser
-            .parse_reasoning_streaming_incremental("<think>reasoning ")
+            .parse_reasoning_streaming_incremental("<think>reasoning ", &[])
             .unwrap();
         assert_eq!(result1.normal_text, "");
         assert_eq!(result1.reasoning_text, "reasoning ");
 
         // Continue streaming reasoning
         let result2 = parser
-            .parse_reasoning_streaming_incremental("content ")
+            .parse_reasoning_streaming_incremental("content ", &[])
             .unwrap();
         assert_eq!(result2.normal_text, "");
         assert_eq!(result2.reasoning_text, "content ");
 
         // End reasoning block
         let result3 = parser
-            .parse_reasoning_streaming_incremental("more</think> normal")
+            .parse_reasoning_streaming_incremental("more</think> normal", &[])
             .unwrap();
         assert_eq!(result3.normal_text, " normal");
         assert_eq!(result3.reasoning_text, "more");
@@ -305,7 +310,7 @@ mod tests {
 
         // Process some text
         parser
-            .parse_reasoning_streaming_incremental("<think>reasoning</think> normal")
+            .parse_reasoning_streaming_incremental("<think>reasoning</think> normal", &[])
             .unwrap();
 
         // Reset and verify state
@@ -324,7 +329,7 @@ mod tests {
         let mut parser = BaseReasoningParser::new(config);
 
         let large_text = "a".repeat(20);
-        let result = parser.detect_and_parse_reasoning(&large_text);
+        let result = parser.detect_and_parse_reasoning(&large_text, &[]);
 
         assert!(result.is_err());
         match result {
@@ -344,13 +349,13 @@ mod tests {
         let mut parser = BaseReasoningParser::new(config);
 
         // Send a partial token that will be buffered
-        let result1 = parser.parse_reasoning_streaming_incremental("<thi");
+        let result1 = parser.parse_reasoning_streaming_incremental("<thi", &[]);
         assert!(result1.is_ok());
         assert_eq!(result1.unwrap().normal_text, "");
 
         // Second chunk would exceed buffer
         // Buffer has "<thi" (4 chars) + "this_is_too_large" (17 chars) = 21 total
-        let result2 = parser.parse_reasoning_streaming_incremental("this_is_too_large");
+        let result2 = parser.parse_reasoning_streaming_incremental("this_is_too_large", &[]);
         assert!(result2.is_err());
         match result2 {
             Err(ParseError::BufferOverflow(size)) => {

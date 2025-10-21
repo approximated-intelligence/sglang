@@ -160,7 +160,7 @@ impl ResponseProcessor {
             );
 
             let mut parser = pooled_parser.lock().await;
-            match parser.detect_and_parse_reasoning(&processed_text) {
+            match parser.detect_and_parse_reasoning(&processed_text, &complete.output_ids) {
                 Ok(result) => {
                     if !result.reasoning_text.is_empty() {
                         reasoning_text = Some(result.reasoning_text);
