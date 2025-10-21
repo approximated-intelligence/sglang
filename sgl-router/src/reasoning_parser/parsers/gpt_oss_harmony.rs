@@ -163,7 +163,7 @@ impl ReasoningParser for GptOssHarmonyReasoningParser {
             }
             _ => {
                 // One or more complete messages - extract reasoning and normal text
-                Ok(self.extract_content(&messages))
+                Ok(self.extract_content(messages))
             }
         }
     }
@@ -269,7 +269,6 @@ mod tests {
             .tokenizer()
             .encode_ordinary(text)
             .into_iter()
-            .map(|t| t as u32)
             .collect()
     }
 
