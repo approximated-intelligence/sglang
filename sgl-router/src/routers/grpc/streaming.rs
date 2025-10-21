@@ -1047,7 +1047,13 @@ impl StreamingProcessor {
         if let Some(pooled_parser) = reasoning_parsers.get(&index) {
             let (parse_result, in_reasoning) = {
                 let mut parser = pooled_parser.lock().await;
-                let result = parser.parse_reasoning_streaming_incremental(delta, token_ids);
+                let result = if parser.supports_token_parsing() {
+                    // Use token-based parsing for parsers like Harmony
+                    parser.parse_reasoning_streaming_incremental_from_tokens(token_ids)
+                } else {
+                    // Use text-based parsing for traditional parsers
+                    parser.parse_reasoning_streaming_incremental(delta)
+                };
                 let in_reasoning = parser.is_in_reasoning();
                 (result, in_reasoning)
             };

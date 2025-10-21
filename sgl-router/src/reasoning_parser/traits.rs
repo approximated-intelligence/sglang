@@ -49,15 +49,10 @@ pub trait ReasoningParser: Send + Sync {
     /// text is available at once.
     ///
     /// # Arguments
-    /// * `text` - The decoded text string (for text-based parsers)
-    /// * `token_ids` - The raw token IDs from the backend (for token-based parsers like Harmony)
+    /// * `text` - The decoded text string
     ///
     /// Returns an error if the text exceeds buffer limits or contains invalid UTF-8.
-    fn detect_and_parse_reasoning(
-        &mut self,
-        text: &str,
-        token_ids: &[u32],
-    ) -> Result<ParserResult, ParseError>;
+    fn detect_and_parse_reasoning(&mut self, text: &str) -> Result<ParserResult, ParseError>;
 
     /// Parses reasoning incrementally from streaming input.
     ///
@@ -65,15 +60,59 @@ pub trait ReasoningParser: Send + Sync {
     /// tokens and chunk boundaries correctly.
     ///
     /// # Arguments
-    /// * `text` - The decoded text string (for text-based parsers)
-    /// * `token_ids` - The raw token IDs from the backend (for token-based parsers like Harmony)
+    /// * `text` - The decoded text string
     ///
     /// Returns an error if the buffer exceeds max_buffer_size.
     fn parse_reasoning_streaming_incremental(
         &mut self,
         text: &str,
-        token_ids: &[u32],
     ) -> Result<ParserResult, ParseError>;
+
+    /// Detect and parse reasoning content from token IDs (optional, token-based parsing).
+    ///
+    /// This method is for parsers that work directly with token IDs instead of text.
+    /// Default implementation falls back to text-based parsing with empty text.
+    ///
+    /// # Arguments
+    /// * `token_ids` - The raw token IDs from the backend
+    ///
+    /// # Returns
+    /// A `ParserResult` containing separated normal and reasoning text
+    fn detect_and_parse_reasoning_from_tokens(
+        &mut self,
+        token_ids: &[u32],
+    ) -> Result<ParserResult, ParseError> {
+        // Default: not supported, fall back to empty text parsing
+        let _ = token_ids; // Suppress unused warning
+        self.detect_and_parse_reasoning("")
+    }
+
+    /// Parse reasoning content from token IDs in streaming mode (optional, token-based parsing).
+    ///
+    /// This method is for parsers that work directly with token IDs in streaming mode.
+    /// Default implementation falls back to text-based parsing with empty text.
+    ///
+    /// # Arguments
+    /// * `token_ids` - The raw token IDs from the backend
+    ///
+    /// # Returns
+    /// A `ParserResult` containing deltas for both normal and reasoning text
+    fn parse_reasoning_streaming_incremental_from_tokens(
+        &mut self,
+        token_ids: &[u32],
+    ) -> Result<ParserResult, ParseError> {
+        // Default: not supported, fall back to empty text parsing
+        let _ = token_ids; // Suppress unused warning
+        self.parse_reasoning_streaming_incremental("")
+    }
+
+    /// Check if this parser supports token-based parsing.
+    ///
+    /// # Returns
+    /// `true` if the parser implements token-based methods, `false` otherwise (default)
+    fn supports_token_parsing(&self) -> bool {
+        false
+    }
 
     /// Reset the parser state for reuse.
     ///

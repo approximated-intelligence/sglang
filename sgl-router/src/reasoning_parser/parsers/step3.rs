@@ -38,20 +38,15 @@ impl Default for Step3Parser {
 }
 
 impl ReasoningParser for Step3Parser {
-    fn detect_and_parse_reasoning(
-        &mut self,
-        text: &str,
-        token_ids: &[u32],
-    ) -> Result<ParserResult, ParseError> {
-        self.base.detect_and_parse_reasoning(text, token_ids)
+    fn detect_and_parse_reasoning(&mut self, text: &str) -> Result<ParserResult, ParseError> {
+        self.base.detect_and_parse_reasoning(text)
     }
 
     fn parse_reasoning_streaming_incremental(
         &mut self,
         text: &str,
-        token_ids: &[u32],
     ) -> Result<ParserResult, ParseError> {
-        self.base.parse_reasoning_streaming_incremental(text, token_ids)
+        self.base.parse_reasoning_streaming_incremental(text)
     }
 
     fn reset(&mut self) {
@@ -77,7 +72,7 @@ mod tests {
 
         // Should treat text as reasoning even without start token
         let result = parser
-            .detect_and_parse_reasoning("This is reasoning content", &[])
+            .detect_and_parse_reasoning("This is reasoning content")
             .unwrap();
         assert_eq!(result.normal_text, "");
         assert_eq!(result.reasoning_text, "This is reasoning content");
@@ -89,7 +84,7 @@ mod tests {
 
         // Should handle text with end token
         let result = parser
-            .detect_and_parse_reasoning("reasoning content</think>answer", &[])
+            .detect_and_parse_reasoning("reasoning content</think>answer")
             .unwrap();
         assert_eq!(result.normal_text, "answer");
         assert_eq!(result.reasoning_text, "reasoning content");
@@ -101,7 +96,7 @@ mod tests {
 
         // Should handle both start and end tokens
         let result = parser
-            .detect_and_parse_reasoning("<think>reasoning content</think>answer", &[])
+            .detect_and_parse_reasoning("<think>reasoning content</think>answer")
             .unwrap();
         assert_eq!(result.normal_text, "answer");
         assert_eq!(result.reasoning_text, "reasoning content");
@@ -113,14 +108,14 @@ mod tests {
 
         // First chunk - treated as reasoning (initial_in_reasoning=true)
         let result1 = parser
-            .parse_reasoning_streaming_incremental("reasoning text ", &[])
+            .parse_reasoning_streaming_incremental("reasoning text ")
             .unwrap();
         assert_eq!(result1.normal_text, "");
         assert_eq!(result1.reasoning_text, "reasoning text ");
 
         // Second chunk - continues reasoning until end token
         let result2 = parser
-            .parse_reasoning_streaming_incremental("more reasoning</think>answer", &[])
+            .parse_reasoning_streaming_incremental("more reasoning</think>answer")
             .unwrap();
         assert_eq!(result2.normal_text, "answer");
         assert_eq!(result2.reasoning_text, "more reasoning");

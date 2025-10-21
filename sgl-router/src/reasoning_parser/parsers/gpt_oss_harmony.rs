@@ -3,11 +3,12 @@
 // This parser uses OpenAI's Harmony framework to parse token-level structured
 // conversations with separate channels for reasoning (analysis) and normal text (final).
 
+use std::sync::OnceLock;
+
 use openai_harmony::{
     chat::{Content, Message, Role},
     load_harmony_encoding, HarmonyEncoding, HarmonyEncodingName, StreamableParser,
 };
-use std::sync::OnceLock;
 
 use crate::reasoning_parser::traits::{ParseError, ParserResult, ReasoningParser};
 
@@ -16,11 +17,12 @@ static GLOBAL_HARMONY_GPTOSS_ENCODING: OnceLock<HarmonyEncoding> = OnceLock::new
 
 /// Get or initialize the global Harmony GPT-OSS encoding.
 fn get_harmony_encoding() -> Result<&'static HarmonyEncoding, ParseError> {
-    GLOBAL_HARMONY_GPTOSS_ENCODING
-        .get_or_init(|| match load_harmony_encoding(HarmonyEncodingName::HarmonyGptOss) {
+    GLOBAL_HARMONY_GPTOSS_ENCODING.get_or_init(|| {
+        match load_harmony_encoding(HarmonyEncodingName::HarmonyGptOss) {
             Ok(enc) => enc,
             Err(e) => panic!("Failed to load Harmony encoding: {}", e),
-        });
+        }
+    });
 
     GLOBAL_HARMONY_GPTOSS_ENCODING
         .get()
@@ -114,10 +116,24 @@ impl Default for GptOssHarmonyReasoningParser {
 }
 
 impl ReasoningParser for GptOssHarmonyReasoningParser {
-    fn detect_and_parse_reasoning(
+    // Text-based methods not supported - this is a token-only parser
+    fn detect_and_parse_reasoning(&mut self, _text: &str) -> Result<ParserResult, ParseError> {
+        // Not supported - use detect_and_parse_reasoning_from_tokens instead
+        Ok(ParserResult::default())
+    }
+
+    fn parse_reasoning_streaming_incremental(
         &mut self,
-        _text: &str,        // Unused - kept for trait compatibility
-        token_ids: &[u32],  // Primary input - always available from gRPC backend
+        _text: &str,
+    ) -> Result<ParserResult, ParseError> {
+        // Not supported - use parse_reasoning_streaming_incremental_from_tokens instead
+        Ok(ParserResult::default())
+    }
+
+    // Token-based methods - the actual implementation
+    fn detect_and_parse_reasoning_from_tokens(
+        &mut self,
+        token_ids: &[u32],
     ) -> Result<ParserResult, ParseError> {
         // Create a fresh parser for this parse operation
         // (StreamableParser doesn't have reset, so we recreate it)
@@ -126,9 +142,9 @@ impl ReasoningParser for GptOssHarmonyReasoningParser {
 
         // Process each token through Harmony's StreamableParser
         for &token_id in token_ids {
-            self.parser.process(token_id).map_err(|e| {
-                ParseError::ConfigError(format!("Failed to process token: {}", e))
-            })?;
+            self.parser
+                .process(token_id)
+                .map_err(|e| ParseError::ConfigError(format!("Failed to process token: {}", e)))?;
         }
 
         // Extract all parsed messages
@@ -138,10 +154,9 @@ impl ReasoningParser for GptOssHarmonyReasoningParser {
         match messages.len() {
             0 => {
                 // No complete messages yet - check if there's partial content
-                let current_content = self
-                    .parser
-                    .current_content()
-                    .map_err(|e| ParseError::ConfigError(format!("Failed to get current content: {}", e)))?;
+                let current_content = self.parser.current_content().map_err(|e| {
+                    ParseError::ConfigError(format!("Failed to get current content: {}", e))
+                })?;
 
                 // Incomplete parsing - treat as reasoning for now
                 Ok(ParserResult::reasoning(current_content))
@@ -153,23 +168,23 @@ impl ReasoningParser for GptOssHarmonyReasoningParser {
         }
     }
 
-    fn parse_reasoning_streaming_incremental(
+    fn parse_reasoning_streaming_incremental_from_tokens(
         &mut self,
-        _text: &str,        // Unused - kept for trait compatibility
-        token_ids: &[u32],  // Primary input - always available from gRPC backend
+        token_ids: &[u32],
     ) -> Result<ParserResult, ParseError> {
         let mut normal_delta = String::new();
         let mut reasoning_delta = String::new();
 
         // Process each token and extract deltas
         for &token_id in token_ids {
-            self.parser.process(token_id).map_err(|e| {
-                ParseError::ConfigError(format!("Failed to process token: {}", e))
-            })?;
+            self.parser
+                .process(token_id)
+                .map_err(|e| ParseError::ConfigError(format!("Failed to process token: {}", e)))?;
 
             // Get delta from last token
-            let delta_result = self.parser.last_content_delta()
-                .map_err(|e| ParseError::ConfigError(format!("Failed to get content delta: {}", e)))?;
+            let delta_result = self.parser.last_content_delta().map_err(|e| {
+                ParseError::ConfigError(format!("Failed to get content delta: {}", e))
+            })?;
 
             if let Some(delta) = delta_result {
                 if let Some(channel) = self.parser.current_channel() {
@@ -191,6 +206,10 @@ impl ReasoningParser for GptOssHarmonyReasoningParser {
         }
 
         Ok(ParserResult::new(normal_delta, reasoning_delta))
+    }
+
+    fn supports_token_parsing(&self) -> bool {
+        true
     }
 
     fn reset(&mut self) {
@@ -262,7 +281,7 @@ mod tests {
         // Format: <|start|>assistant<|message|>Hello world
         let start_tokens = encode_text("<|start|>assistant<|message|>Hello world");
 
-        let result = parser.detect_and_parse_reasoning("", &start_tokens);
+        let result = parser.detect_and_parse_reasoning_from_tokens(&start_tokens);
 
         // For incomplete message (no stop token), we expect it to be treated as reasoning
         // until we have a complete parsed message
@@ -276,7 +295,7 @@ mod tests {
         // Test with analysis channel marker
         let tokens = encode_text("<|start|>assistant<|channel|>analysis<|message|>thinking");
 
-        let result = parser.detect_and_parse_reasoning("", &tokens);
+        let result = parser.detect_and_parse_reasoning_from_tokens(&tokens);
         assert!(result.is_ok());
     }
 
@@ -287,7 +306,7 @@ mod tests {
         // Test with final channel marker
         let tokens = encode_text("<|start|>assistant<|channel|>final<|message|>answer");
 
-        let result = parser.detect_and_parse_reasoning("", &tokens);
+        let result = parser.detect_and_parse_reasoning_from_tokens(&tokens);
         assert!(result.is_ok());
     }
 
@@ -296,7 +315,7 @@ mod tests {
         let mut parser = GptOssHarmonyReasoningParser::new().unwrap();
 
         // Should handle empty token list gracefully
-        let result = parser.detect_and_parse_reasoning("", &[]);
+        let result = parser.detect_and_parse_reasoning("");
         assert!(result.is_ok());
 
         let parsed = result.unwrap();
@@ -309,7 +328,7 @@ mod tests {
         let mut parser = GptOssHarmonyReasoningParser::new().unwrap();
 
         // Empty streaming should work
-        let result = parser.parse_reasoning_streaming_incremental("", &[]);
+        let result = parser.parse_reasoning_streaming_incremental("");
         assert!(result.is_ok());
 
         let parsed = result.unwrap();
@@ -324,7 +343,7 @@ mod tests {
         // Test basic streaming with some tokens
         let tokens = encode_text("test");
 
-        let result = parser.parse_reasoning_streaming_incremental("", &tokens);
+        let result = parser.parse_reasoning_streaming_incremental_from_tokens(&tokens);
         assert!(result.is_ok());
     }
 
@@ -344,14 +363,14 @@ mod tests {
     }
 
     #[test]
-    fn test_text_parameter_ignored() {
+    fn test_token_based_parsing() {
         let mut parser = GptOssHarmonyReasoningParser::new().unwrap();
 
-        // Text parameter should be ignored (token-only parsing)
+        // This is a token-only parser - use token-based methods
         let tokens = encode_text("actual content");
 
-        // Text parameter doesn't match tokens - should use tokens
-        let result = parser.detect_and_parse_reasoning("different text", &tokens);
+        // Use the token-based method
+        let result = parser.detect_and_parse_reasoning_from_tokens(&tokens);
         assert!(result.is_ok());
     }
 
@@ -365,10 +384,7 @@ mod tests {
         assert!(enc2.is_ok());
 
         // Should be same reference (OnceLock ensures single initialization)
-        assert_eq!(
-            enc1.unwrap() as *const _,
-            enc2.unwrap() as *const _
-        );
+        assert_eq!(enc1.unwrap() as *const _, enc2.unwrap() as *const _);
     }
 
     #[test]
@@ -393,14 +409,14 @@ mod tests {
         let mut parser = GptOssHarmonyReasoningParser::new().unwrap();
 
         let tokens1 = encode_text("first");
-        let result1 = parser.detect_and_parse_reasoning("", &tokens1);
+        let result1 = parser.detect_and_parse_reasoning_from_tokens(&tokens1);
         assert!(result1.is_ok());
 
         // Reset before second parse
         parser.reset();
 
         let tokens2 = encode_text("second");
-        let result2 = parser.detect_and_parse_reasoning("", &tokens2);
+        let result2 = parser.detect_and_parse_reasoning_from_tokens(&tokens2);
         assert!(result2.is_ok());
     }
 
@@ -409,12 +425,13 @@ mod tests {
         let mut parser = GptOssHarmonyReasoningParser::new().unwrap();
 
         // Test with a larger sequence
-        let large_text = "This is a longer piece of text that will generate more tokens for testing purposes.";
+        let large_text =
+            "This is a longer piece of text that will generate more tokens for testing purposes.";
         let tokens = encode_text(large_text);
 
         assert!(tokens.len() > 10); // Should have multiple tokens
 
-        let result = parser.detect_and_parse_reasoning("", &tokens);
+        let result = parser.detect_and_parse_reasoning_from_tokens(&tokens);
         assert!(result.is_ok());
     }
 
@@ -424,11 +441,11 @@ mod tests {
 
         // Test that streaming maintains state across calls
         let tokens1 = encode_text("first part");
-        let result1 = parser.parse_reasoning_streaming_incremental("", &tokens1);
+        let result1 = parser.parse_reasoning_streaming_incremental_from_tokens(&tokens1);
         assert!(result1.is_ok());
 
         let tokens2 = encode_text(" second part");
-        let result2 = parser.parse_reasoning_streaming_incremental("", &tokens2);
+        let result2 = parser.parse_reasoning_streaming_incremental_from_tokens(&tokens2);
         assert!(result2.is_ok());
 
         // State should accumulate
@@ -441,7 +458,7 @@ mod tests {
         // Test with Harmony formatting tokens
         let tokens = encode_text("<|start|><|message|><|end|>");
 
-        let result = parser.detect_and_parse_reasoning("", &tokens);
+        let result = parser.detect_and_parse_reasoning_from_tokens(&tokens);
         assert!(result.is_ok());
     }
 }
