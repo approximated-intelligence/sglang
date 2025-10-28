@@ -45,7 +45,7 @@ pub fn internal_error(message: impl Into<String>) -> Response {
 /// ```
 pub fn bad_request(message: impl Into<String>) -> Response {
     let msg = message.into();
-    error!("{}", msg);
+    warn!("{}", msg);
     (
         StatusCode::BAD_REQUEST,
         Json(json!({
