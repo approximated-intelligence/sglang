@@ -292,7 +292,7 @@ class GDNAttnBackend(MambaAttnBackendBase):
             q=query,
             k=key,
             v=value,
-            a=a.contiguous(),
+            a=a,
             b=b,
             initial_state_source=ssm_states,
             initial_state_indices=cache_indices,
@@ -403,7 +403,7 @@ class GDNAttnBackend(MambaAttnBackendBase):
         value = value.view(1, actual_seq_len, num_value_heads, head_v_dim)
 
         beta = b.sigmoid()
-        g = fused_gdn_gating(A_log, a.contiguous(), dt_bias)
+        g = fused_gdn_gating(A_log, a, dt_bias)
 
         g = g.unsqueeze(0)
         beta = beta.unsqueeze(0)
