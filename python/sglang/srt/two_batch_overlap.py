@@ -4,7 +4,7 @@ import copy
 import dataclasses
 import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence
 
 import torch
 
@@ -24,6 +24,7 @@ from sglang.srt.layers.moe import (
 from sglang.srt.layers.moe.token_dispatcher import (
     DeepEPDispatcher,
     MooncakeEPDispatcher,
+    BaseDispatcher,
 )
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.model_executor.forward_batch_info import (
@@ -38,7 +39,7 @@ from sglang.srt.speculative.spec_info import SpecInput
 from sglang.srt.utils import BumpAllocator, empty_context, get_bool_env_var, is_hip
 
 if TYPE_CHECKING:
-    from sglang.srt.layers.moe.token_dispatcher import DispatchOutput
+    from sglang.srt.layers.moe.token_dispatcher import CombineInput, DispatchOutput
     from sglang.srt.speculative.eagle_info import EagleVerifyInput
 
 _is_hip = is_hip()
@@ -968,7 +969,7 @@ def _model_forward_tbo_merge_outputs(output_a, output_b):
 # -------------------------------- Utilities and wrappers ---------------------------------------
 
 
-class MaybeTboDeepEPDispatcher:
+class MaybeTboDeepEPDispatcher(BaseDispatcher):
     def __init__(self, **kwargs):
         num_inner_dispatchers = 2 if is_tbo_enabled() else 1
         if get_moe_a2a_backend().is_deepep():
@@ -992,11 +993,11 @@ class MaybeTboDeepEPDispatcher:
     def dispatch_b(self, **kwargs):
         return self._execute("dispatch_b", **kwargs)
 
-    def combine(self, **kwargs) -> torch.Tensor:
-        return self._execute("combine", **kwargs)
+    def combine(self, combine_input: CombineInput, **kwargs) -> torch.Tensor:
+        return self._execute("combine", combine_input=combine_input, **kwargs)
 
-    def combine_a(self, **kwargs):
-        return self._execute("combine_a", **kwargs)
+    def combine_a(self, combine_input: CombineInput, **kwargs):
+        return self._execute("combine_a", combine_input=combine_input, **kwargs)
 
     def combine_b(self, **kwargs):
         return self._execute("combine_b", **kwargs)
@@ -1004,3 +1005,11 @@ class MaybeTboDeepEPDispatcher:
     def set_quant_config(self, quant_config: dict):
         for inner in self._inners:
             inner.set_quant_config(quant_config)
+    
+    def register_combine_hook(self, hook_func: Callable):
+        for inner in self._inners:
+            inner.register_combine_hook(hook_func)
+    
+    def clear_combine_hook(self):
+        for inner in self._inners:
+            inner.clear_combine_hook()

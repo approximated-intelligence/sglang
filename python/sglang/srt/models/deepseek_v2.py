@@ -807,13 +807,13 @@ class DeepseekV2MoE(nn.Module):
                 shared_output = self._forward_shared_experts(
                     hidden_states, gemm_output_zero_allocator
                 )
+            self.experts.dispatcher.register_combine_hook(_forward_shared_experts_and_put_results)
 
         final_hidden_states = self.experts(
             hidden_states,
             topk_output,
             **(
                 dict(
-                    forward_shared_experts=_forward_shared_experts_and_put_results,
                     alt_stream=self.alt_stream,
                 )
                 if self._fuse_shared_experts_inside_sbo
@@ -923,12 +923,13 @@ class DeepseekV2MoE(nn.Module):
                 nonlocal shared_output
                 shared_output = self._forward_shared_experts(hidden_states)
 
+            self.experts.dispatcher.register_combine_hook(_forward_shared_experts_and_put_results)
+
         final_hidden_states = self.experts(
             hidden_states=hidden_states,
             topk_output=topk_output,
             **(
                 dict(
-                    forward_shared_experts=_forward_shared_experts_and_put_results,
                     alt_stream=self.alt_stream,
                     # SBO is not yet implemented for NextN
                     disable_sbo=self.is_nextn,

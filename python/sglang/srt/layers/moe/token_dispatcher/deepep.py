@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, NamedTuple, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, List, NamedTuple, Optional, Tuple, Union
 
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.layers import deep_gemm_wrapper
@@ -712,6 +712,7 @@ class DeepEPDispatcher(BaseDispatcher):
         return_recv_hook: bool = False,
     ):
         self.deepep_mode = deepep_mode
+        self.combine_hook = None
 
         common_kwargs = dict(
             group=group,
@@ -765,6 +766,10 @@ class DeepEPDispatcher(BaseDispatcher):
         combine_input: CombineInput,
         overlap_args: Optional[CombineOverlapArgs] = None,
     ) -> Tuple:
+        if self.combine_hook is not None:
+            hook_result = self.combine_hook(combine_input)
+            if hook_result is not None:
+                combine_input = hook_result
         self.combine_a(combine_input, overlap_args)
         ret = self.combine_b()
         return ret
@@ -809,3 +814,10 @@ class DeepEPDispatcher(BaseDispatcher):
             self._low_latency_dispatcher.set_quant_config(quant_config)
         if self.deepep_mode.enable_normal():
             self._normal_dispatcher.set_quant_config(quant_config)
+    
+    def register_combine_hook(self, hook_func: Callable):
+        assert self.combine_hook is None, "combine hook already registered"
+        self.combine_hook = hook_func
+    
+    def clear_combine_hook(self):
+        self.combine_hook = None

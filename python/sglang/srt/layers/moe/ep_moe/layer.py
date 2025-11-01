@@ -136,13 +136,11 @@ class DeepEPMoE(FusedMoE):
         self,
         hidden_states: torch.Tensor,
         topk_output: TopKOutput,
-        forward_shared_experts=None,
         alt_stream=None,
         disable_sbo=False,
     ):
 
         if self.deprecate_flag:
-            assert forward_shared_experts is None
             assert alt_stream is None
             return super().forward(
                 hidden_states,
@@ -155,7 +153,6 @@ class DeepEPMoE(FusedMoE):
             topk_output=topk_output,
             # SBO args
             experts=self,
-            forward_shared_experts=forward_shared_experts,
             alt_stream=alt_stream,
             disable_sbo=disable_sbo,
         )

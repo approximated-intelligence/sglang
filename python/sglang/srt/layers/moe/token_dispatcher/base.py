@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, TypeGuard, Union, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, TypeGuard, Union, runtime_checkable
 
 import torch
 
@@ -145,6 +145,9 @@ class BaseDispatcherConfig(ABC):
 class BaseDispatcher(ABC):
     """Base class for dispatchers."""
 
+    quant_config: dict = {}
+    combine_hook: Optional[Callable[[CombineInput], Optional[CombineInput]]] = None
+
     @abstractmethod
     def dispatch(
         self, hidden_states: torch.Tensor, topk_output: TopKOutput, **kwargs
@@ -153,4 +156,16 @@ class BaseDispatcher(ABC):
 
     @abstractmethod
     def combine(self, combine_input: CombineInput, **kwargs) -> torch.Tensor:
+        pass
+    
+    @abstractmethod
+    def set_quant_config(self, quant_config: dict) -> None:
+        pass
+
+    @abstractmethod
+    def register_combine_hook(self, hook_func: Callable[[CombineInput], Optional[CombineInput]]) -> None:
+        pass
+    
+    @abstractmethod
+    def clear_combine_hook(self) -> None:
         pass

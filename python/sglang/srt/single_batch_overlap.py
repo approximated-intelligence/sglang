@@ -69,7 +69,6 @@ class DownGemmOverlapArgs:
 
 
 def execute_sbo(
-    forward_shared_experts: Callable[[], Any],
     experts: FusedMoE,
     hidden_states: torch.Tensor,
     topk_output: TopKOutput,
@@ -92,11 +91,13 @@ def execute_sbo(
         e.record()
 
     if (not disable_sbo) and SboFlags.enable_combine_shared_two_stream_overlap():
-        # TODO reduce sm for non-deepgemm
+        # TODO: reduce sm for non-deepgemm
+        # TODO: move hook execution to dispatcher
         with deep_gemm_wrapper.configure_deep_gemm_num_sms(
             meta_overlap_args["compute_num_sms"]
         ):
-            forward_shared_experts()
+            experts.dispatcher.combine_hook(None)
+            experts.dispatcher.clear_combine_hook()
 
     hidden_states = experts.dispatcher.combine(
         combine_input=combine_input,
