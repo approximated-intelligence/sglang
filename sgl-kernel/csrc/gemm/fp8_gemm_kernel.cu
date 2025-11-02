@@ -438,6 +438,8 @@ void sm89_fp8_dispatch_shape(
 #endif
 
 #if defined CUDA_VERSION && CUDA_VERSION >= 12000
+// Adapted from vLLM:
+// https://github.com/vllm-project/vllm/blob/main/csrc/quantization/w8a8/cutlass/c3x/scaled_mm_sm90_fp8_dispatch.cuh
 template <
     typename ElementType,
     typename OutElementType,
@@ -447,13 +449,15 @@ template <
     typename MainloopScheduleType,
     typename EpilogueScheduleType,
     typename TileSchedulerType = void,
-    bool WithBias = false>
+    bool WithBias = false,
+    bool SwapAB = false>
 struct DeviceGemmFp8RowwiseSm90 {
   static_assert(std::is_same_v<ElementType, cutlass::float_e4m3_t>, "ElementType must be FP8(e4m3)");
 
   // A matrix configuration
   using ElementA = ElementType;               // Element type for A matrix operand
   using LayoutA = cutlass::layout::RowMajor;  // Layout type for A matrix operand
+  using LayoutA_T = typename cutlass::layout::LayoutTranspose<LayoutA>::type;
   static constexpr int AlignmentA =
       128 / cutlass::sizeof_bits<ElementA>::value;  // Memory access granularity/alignment of A
                                                     // matrix in units of elements (up to 16 bytes)
@@ -461,6 +465,7 @@ struct DeviceGemmFp8RowwiseSm90 {
   // B matrix configuration
   using ElementB = ElementType;                  // Element type for B matrix operand
   using LayoutB = cutlass::layout::ColumnMajor;  // Layout type for B matrix operand
+  using LayoutB_T = typename cutlass::layout::LayoutTranspose<LayoutB>::type;
   static constexpr int AlignmentB =
       128 / cutlass::sizeof_bits<ElementB>::value;  // Memory access granularity/alignment of B
                                                     // matrix in units of elements (up to 16 bytes)
@@ -468,6 +473,7 @@ struct DeviceGemmFp8RowwiseSm90 {
   // C/D matrix configuration
   using ElementC = void;                      // Element type for C matrix operands
   using LayoutC = cutlass::layout::RowMajor;  // Layout type for C matrix operands
+  using LayoutC_T = typename cutlass::layout::LayoutTranspose<LayoutC>::type;
   static constexpr int AlignmentC =
       128 / cutlass::sizeof_bits<OutElementType>::value;  // Memory access granularity/alignment of C matrices in
                                                           // units of elements (up to 16 bytes)
@@ -475,6 +481,7 @@ struct DeviceGemmFp8RowwiseSm90 {
   // Output matrix configuration
   using ElementOutput = OutElementType;            // Element type for output matrix operands
   using LayoutOutput = cutlass::layout::RowMajor;  // Layout type for output matrix operands
+  using LayoutOutput_T = typename cutlass::layout::LayoutTranspose<LayoutOutput>::type;
   static constexpr int AlignmentOutput = 128 / cutlass::sizeof_bits<ElementOutput>::value;
 
   // // Auxiliary matrix configuration and other fusion types
@@ -518,6 +525,14 @@ struct DeviceGemmFp8RowwiseSm90 {
       ElementOutput,
       cute::Stride<cute::Int<0>, cute::Int<1>, cute::Int<0>>>;
 
+  // Column bias for swapAB case
+  using ColumnBias = cutlass::epilogue::fusion::Sm90ColBroadcast<
+      0,
+      TileShape,
+      ElementOutput,
+      ElementOutput,
+      cute::Stride<cute::Int<1>, cute::Int<0>, cute::Int<0>>>;
+
   using Accum = cutlass::epilogue::fusion::Sm90AccFetch;
 
   using Compute0 = cutlass::epilogue::fusion::Sm90Compute<
@@ -544,7 +559,18 @@ struct DeviceGemmFp8RowwiseSm90 {
       cutlass::FloatRoundStyle::round_to_nearest>;
   using EVTComputeWithBias = cutlass::epilogue::fusion::Sm90EVT<ComputeWithBias, XScale, EVTCompute0, Bias>;
 
-  using EpilogueEVT = typename cutlass::platform::conditional<WithBias, EVTComputeWithBias, EVTCompute1>::type;
+  // With column bias (for swapAB case)
+  using ComputeWithColumnBias = cutlass::epilogue::fusion::Sm90Compute<
+      cutlass::multiply_add,
+      ElementOutput,
+      ElementComputeEpilogue,
+      cutlass::FloatRoundStyle::round_to_nearest>;
+  using EVTComputeWithColumnBias = cutlass::epilogue::fusion::Sm90EVT<ComputeWithColumnBias, XScale, EVTCompute0, ColumnBias>;
+
+  using EpilogueEVT = typename cutlass::platform::conditional<
+      WithBias && SwapAB,
+      EVTComputeWithColumnBias,
+      typename cutlass::platform::conditional<WithBias, EVTComputeWithBias, EVTCompute1>::type>::type;
 
   using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilder<
       cutlass::arch::Sm90,
@@ -555,10 +581,10 @@ struct DeviceGemmFp8RowwiseSm90 {
       ElementAccumulator,
       ElementComputeEpilogue,
       ElementC,
-      LayoutC,
+      typename cutlass::platform::conditional<SwapAB, LayoutC_T, LayoutC>::type,
       AlignmentC,
       ElementOutput,
-      LayoutOutput,
+      typename cutlass::platform::conditional<SwapAB, LayoutOutput_T, LayoutOutput>::type,
       AlignmentOutput,
       cutlass::epilogue::TmaWarpSpecialized,
       EpilogueEVT>::CollectiveOp;
@@ -571,21 +597,38 @@ struct DeviceGemmFp8RowwiseSm90 {
   using SlowAccum = DefaultSchedule;
   using FastAccum = FastPongSchedule;  // Default apply Pingpong
 
-  using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
-      ArchTag,
-      OperatorClass,
-      ElementA,
-      LayoutA,
-      AlignmentA,
-      ElementB,
-      LayoutB,
-      AlignmentB,
-      ElementAccumulator,
-      TileShape,
-      ClusterShape,
-      cutlass::gemm::collective::StageCountAutoCarveout<static_cast<int>(
-          sizeof(typename CollectiveEpilogue::SharedStorage))>,
-      MainloopScheduleType>::CollectiveOp;
+  using CollectiveMainloop = typename cutlass::platform::conditional<
+      SwapAB,
+      typename cutlass::gemm::collective::CollectiveBuilder<
+          ArchTag,
+          OperatorClass,
+          ElementB,
+          LayoutB_T,
+          AlignmentB,
+          ElementA,
+          LayoutA_T,
+          AlignmentA,
+          ElementAccumulator,
+          TileShape,
+          ClusterShape,
+          cutlass::gemm::collective::StageCountAutoCarveout<static_cast<int>(
+              sizeof(typename CollectiveEpilogue::SharedStorage))>,
+          MainloopScheduleType>::CollectiveOp,
+      typename cutlass::gemm::collective::CollectiveBuilder<
+          ArchTag,
+          OperatorClass,
+          ElementA,
+          LayoutA,
+          AlignmentA,
+          ElementB,
+          LayoutB,
+          AlignmentB,
+          ElementAccumulator,
+          TileShape,
+          ClusterShape,
+          cutlass::gemm::collective::StageCountAutoCarveout<static_cast<int>(
+              sizeof(typename CollectiveEpilogue::SharedStorage))>,
+          MainloopScheduleType>::CollectiveOp>::type;
 
   using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
       Shape<int, int, int, int>,  // Indicates ProblemShape
@@ -596,7 +639,7 @@ struct DeviceGemmFp8RowwiseSm90 {
   using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
 };
 
-template <typename Gemm, bool WithBias>
+template <typename Gemm, bool WithBias, bool SwapAB>
 typename Gemm::Arguments prepare_sm90_fp8_args(
     torch::Tensor& out,
     const torch::Tensor& a,
@@ -626,46 +669,78 @@ typename Gemm::Arguments prepare_sm90_fp8_args(
   ElementComputeEpilogue const* ptr_scales_a = reinterpret_cast<ElementComputeEpilogue const*>(scales_a.data_ptr());
   ElementComputeEpilogue const* ptr_scales_b = reinterpret_cast<ElementComputeEpilogue const*>(scales_b.data_ptr());
 
+  // Adapted from vLLM: swap A and B for better performance when M is small
+  auto prob_shape = SwapAB ? cute::make_shape(n, m, k, 1) : cute::make_shape(m, n, k, 1);
   StrideA stride_a = cutlass::make_cute_packed_stride(StrideA{}, make_shape(m, k, 1));
   StrideB stride_b = cutlass::make_cute_packed_stride(StrideB{}, make_shape(n, k, 1));
   StrideC stride_c;
-  StrideD stride_d = cutlass::make_cute_packed_stride(StrideD{}, make_shape(m, n, 1));
+  StrideD stride_d = cutlass::make_cute_packed_stride(
+      StrideD{}, SwapAB ? cute::make_shape(n, m, 1) : cute::make_shape(m, n, 1));
+
   typename Gemm::Arguments args = {
       cutlass::gemm::GemmUniversalMode::kGemm,
-      {m, n, k, 1},
-      {ptr_a, stride_a, ptr_b, stride_b},
+      prob_shape,
+      SwapAB ? typename Gemm::GemmKernel::MainloopArguments{ptr_b, stride_b, ptr_a, stride_a}
+             : typename Gemm::GemmKernel::MainloopArguments{ptr_a, stride_a, ptr_b, stride_b},
       {{},  // epilogue.thread
        nullptr,
        stride_c,
        ptr_d,
        stride_d}};
+
+  // Swap scales for swapAB case
   if constexpr (WithBias) {
-    args.epilogue.thread = {
-        {ptr_scales_a},
-        {
-            {ptr_scales_b},
-            {},  // Accumulator
-            {}   // Multiplies
-        },
-        {ptr_bias},
-        {},  // Multiplies
-    };
+    if constexpr (SwapAB) {
+      args.epilogue.thread = {
+          {ptr_scales_b},
+          {
+              {ptr_scales_a},
+              {},  // Accumulator
+              {}   // Multiplies
+          },
+          {ptr_bias},
+          {},  // Multiplies
+      };
+    } else {
+      args.epilogue.thread = {
+          {ptr_scales_a},
+          {
+              {ptr_scales_b},
+              {},  // Accumulator
+              {}   // Multiplies
+          },
+          {ptr_bias},
+          {},  // Multiplies
+      };
+    }
   } else {
-    args.epilogue.thread = {
-        {ptr_scales_a},
-        {
-            {ptr_scales_b},
-            {},  // Accumulator
-            {}   // Multiplies
-        },
-        {},  // Multiplies
-    };
+    if constexpr (SwapAB) {
+      args.epilogue.thread = {
+          {ptr_scales_b},
+          {
+              {ptr_scales_a},
+              {},  // Accumulator
+              {}   // Multiplies
+          },
+          {},  // Multiplies
+      };
+    } else {
+      args.epilogue.thread = {
+          {ptr_scales_a},
+          {
+              {ptr_scales_b},
+              {},  // Accumulator
+              {}   // Multiplies
+          },
+          {},  // Multiplies
+      };
+    }
   }
 
   return args;
 }
 
-template <typename Gemm, bool WithBias>
+template <typename Gemm, bool WithBias, bool SwapAB>
 void launch_sm90_fp8_scaled_mm(
     torch::Tensor& out,
     const torch::Tensor& a,
@@ -673,7 +748,7 @@ void launch_sm90_fp8_scaled_mm(
     const torch::Tensor& scales_a,
     const torch::Tensor& scales_b,
     const c10::optional<torch::Tensor>& bias) {
-  auto args = prepare_sm90_fp8_args<Gemm, WithBias>(out, a, b, scales_a, scales_b, bias);
+  auto args = prepare_sm90_fp8_args<Gemm, WithBias, SwapAB>(out, a, b, scales_a, scales_b, bias);
   Gemm gemm_op;
 
   size_t workspace_size = gemm_op.get_workspace_size(args);
@@ -694,7 +769,8 @@ template <
     typename CTAShape,
     typename ClusterShape,
     typename MainloopScheduleType,
-    typename TileSchedulerType>
+    typename TileSchedulerType,
+    bool SwapAB = false>
 void sm90_fp8_dispatch_bias(
     torch::Tensor& out,
     const torch::Tensor& a,
@@ -719,8 +795,9 @@ void sm90_fp8_dispatch_bias(
         MainloopScheduleType,
         EpilogueScheduleType,
         TileSchedulerType,
-        true>::Gemm;
-    return launch_sm90_fp8_scaled_mm<Gemm, true>(out, a, b, scales_a, scales_b, bias);
+        true,
+        SwapAB>::Gemm;
+    return launch_sm90_fp8_scaled_mm<Gemm, true, SwapAB>(out, a, b, scales_a, scales_b, bias);
   } else {
     using Gemm = typename DeviceGemmFp8RowwiseSm90<
         ElementInput,
@@ -731,11 +808,14 @@ void sm90_fp8_dispatch_bias(
         MainloopScheduleType,
         EpilogueScheduleType,
         TileSchedulerType,
-        false>::Gemm;
-    return launch_sm90_fp8_scaled_mm<Gemm, false>(out, a, b, scales_a, scales_b, bias);
+        false,
+        SwapAB>::Gemm;
+    return launch_sm90_fp8_scaled_mm<Gemm, false, SwapAB>(out, a, b, scales_a, scales_b, bias);
   }
 }
 
+// Adapted from vLLM: enable swapAB optimization for small M
+// https://github.com/vllm-project/vllm/blob/main/csrc/quantization/w8a8/cutlass/c3x/scaled_mm_sm90_fp8_dispatch.cuh
 template <typename OutType>
 void sm90_fp8_dispatch_shape(
     torch::Tensor& out,
@@ -750,21 +830,24 @@ void sm90_fp8_dispatch_shape(
   using PersistentTileScheduler = cutlass::gemm::PersistentScheduler;
   using BasicTileScheduler = void;
   if (m <= 1) {
+    // Enable swapAB for M=1
     return sm90_fp8_dispatch_bias<
         OutType,
         Shape<_64, _64, _128>,
         Shape<_1, _8, _1>,
         FastBasicScheduler,
-        BasicTileScheduler>(out, a, b, scales_a, scales_b, bias);
+        BasicTileScheduler,
+        true>(out, a, b, scales_a, scales_b, bias);
   }
   if (m <= 64) {
-    // m in [1, 64]
+    // m in (1, 64], enable swapAB for better performance
     return sm90_fp8_dispatch_bias<
         OutType,
         Shape<_64, _64, _128>,
         Shape<_1, _4, _1>,
         FastPingpongScheduler,
-        PersistentTileScheduler>(out, a, b, scales_a, scales_b, bias);
+        PersistentTileScheduler,
+        true>(out, a, b, scales_a, scales_b, bias);
   } else if (m <= 256) {
     // m in (64, 256]
     return sm90_fp8_dispatch_bias<
@@ -772,7 +855,8 @@ void sm90_fp8_dispatch_shape(
         Shape<_64, _64, _128>,
         Shape<_1, _1, _1>,
         FastPingpongScheduler,
-        PersistentTileScheduler>(out, a, b, scales_a, scales_b, bias);
+        PersistentTileScheduler,
+        false>(out, a, b, scales_a, scales_b, bias);
   } else if (m <= 1024) {
     // m in (256, 1024]
     return sm90_fp8_dispatch_bias<
@@ -780,7 +864,8 @@ void sm90_fp8_dispatch_shape(
         Shape<_128, _128, _128>,
         Shape<_1, _1, _1>,
         FastPingpongScheduler,
-        PersistentTileScheduler>(out, a, b, scales_a, scales_b, bias);
+        PersistentTileScheduler,
+        false>(out, a, b, scales_a, scales_b, bias);
   } else {
     // m in (1024, inf)
     return sm90_fp8_dispatch_bias<
@@ -788,7 +873,8 @@ void sm90_fp8_dispatch_shape(
         Shape<_128, _128, _128>,
         Shape<_2, _1, _1>,
         FastPingpongScheduler,
-        PersistentTileScheduler>(out, a, b, scales_a, scales_b, bias);
+        PersistentTileScheduler,
+        false>(out, a, b, scales_a, scales_b, bias);
   }
 }
 #endif
