@@ -997,6 +997,7 @@ void sm90_fp8_dispatch_shape(
   using BasicTileScheduler = void;
   // Adapted from vLLM: use SwapAB for better performance when M is small
   if (m <= 1) {
+    printf("m = %d, using SwapAB\n", m);
     return sm90_fp8_dispatch_bias_swapab<
         OutType,
         Shape<_64, _64, _128>,
@@ -1005,6 +1006,7 @@ void sm90_fp8_dispatch_shape(
         BasicTileScheduler>(out, a, b, scales_a, scales_b, bias);
   }
   if (m <= 64) {
+    printf("m = %d, using SwapAB\n", m);
     // m in (1, 64], use SwapAB
     return sm90_fp8_dispatch_bias_swapab<
         OutType,
