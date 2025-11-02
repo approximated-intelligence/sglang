@@ -795,12 +795,13 @@ typename Gemm::Arguments prepare_sm90_fp8_args_swapab(
   ElementComputeEpilogue const* ptr_scales_a = reinterpret_cast<ElementComputeEpilogue const*>(scales_a.data_ptr());
   ElementComputeEpilogue const* ptr_scales_b = reinterpret_cast<ElementComputeEpilogue const*>(scales_b.data_ptr());
 
+  // Adapted from vLLM: stride calculation uses ORIGINAL dimensions
   // Swap problem shape: {n, m, k} instead of {m, n, k}
   // Swap operands: B^T @ A^T
-  StrideA stride_a = cutlass::make_cute_packed_stride(StrideA{}, make_shape(n, k, 1));
-  StrideB stride_b = cutlass::make_cute_packed_stride(StrideB{}, make_shape(m, k, 1));
+  StrideA stride_a = cutlass::make_cute_packed_stride(StrideA{}, make_shape(m, k, 1));  // Original m, k!
+  StrideB stride_b = cutlass::make_cute_packed_stride(StrideB{}, make_shape(n, k, 1));  // Original n, k!
   StrideC stride_c;
-  StrideD stride_d = cutlass::make_cute_packed_stride(StrideD{}, make_shape(n, m, 1));
+  StrideD stride_d = cutlass::make_cute_packed_stride(StrideD{}, make_shape(n, m, 1));  // Swapped for output
   
   typename Gemm::Arguments args = {
       cutlass::gemm::GemmUniversalMode::kGemm,
@@ -995,25 +996,45 @@ void sm90_fp8_dispatch_shape(
   using FastBasicScheduler = cutlass::gemm::KernelTmaWarpSpecializedFP8FastAccum;
   using PersistentTileScheduler = cutlass::gemm::PersistentScheduler;
   using BasicTileScheduler = void;
+  uint32_t const n = b.size(1);
+  
   // Adapted from vLLM: use SwapAB for better performance when M is small
-  if (m <= 1) {
-    printf("m = %d, using SwapAB\n", m);
-    return sm90_fp8_dispatch_bias_swapab<
-        OutType,
-        Shape<_64, _64, _128>,
-        Shape<_1, _8, _1>,
-        FastBasicScheduler,
-        BasicTileScheduler>(out, a, b, scales_a, scales_b, bias);
+  // Use TileShape with K=256 for better performance
+  if (m <= 16) {
+    // M in [1, 16], use SwapAB with K=256
+    if (n <= 1280) {
+      return sm90_fp8_dispatch_bias_swapab<
+          OutType,
+          Shape<_64, _16, _256>,
+          Shape<_1, _2, _1>,
+          FastBasicScheduler,
+          BasicTileScheduler>(out, a, b, scales_a, scales_b, bias);
+    } else {
+      return sm90_fp8_dispatch_bias_swapab<
+          OutType,
+          Shape<_64, _16, _256>,
+          Shape<_1, _1, _1>,
+          FastBasicScheduler,
+          BasicTileScheduler>(out, a, b, scales_a, scales_b, bias);
+    }
   }
   if (m <= 64) {
-    printf("m = %d, using SwapAB\n", m);
-    // m in (1, 64], use SwapAB
-    return sm90_fp8_dispatch_bias_swapab<
-        OutType,
-        Shape<_64, _64, _128>,
-        Shape<_1, _4, _1>,
-        FastPingpongScheduler,
-        PersistentTileScheduler>(out, a, b, scales_a, scales_b, bias);
+    // m in (16, 64], use SwapAB with K=256
+    if (n <= 1280) {
+      return sm90_fp8_dispatch_bias_swapab<
+          OutType,
+          Shape<_64, _16, _256>,
+          Shape<_1, _4, _1>,
+          FastBasicScheduler,
+          BasicTileScheduler>(out, a, b, scales_a, scales_b, bias);
+    } else {
+      return sm90_fp8_dispatch_bias_swapab<
+          OutType,
+          Shape<_64, _64, _256>,
+          Shape<_1, _1, _1>,
+          FastBasicScheduler,
+          BasicTileScheduler>(out, a, b, scales_a, scales_b, bias);
+    }
   } else if (m <= 256) {
     // m in (64, 256]
     return sm90_fp8_dispatch_bias<
