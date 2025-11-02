@@ -613,17 +613,18 @@ struct DeviceGemmFp8RowwiseSm90SwapAB {
   static_assert(std::is_same_v<ElementType, cutlass::float_e4m3_t>, "ElementType must be FP8(e4m3)");
 
   // Swap A and B: compute C^T = B^T @ A^T
-  // A matrix configuration (becomes B^T)
+  // BUT keep TN layout (RowMajor, ColumnMajor) for CUTLASS FP8 requirement
+  // We swap by using transposed layouts: B^T (ColumnMajor->RowMajor), A^T (RowMajor->ColumnMajor)
   using ElementA = ElementType;
-  using LayoutA = cutlass::layout::ColumnMajor;  // Transposed
+  using LayoutA = cutlass::layout::RowMajor;  // B^T layout (ColumnMajor transposed)
   static constexpr int AlignmentA = 128 / cutlass::sizeof_bits<ElementA>::value;
 
-  // B matrix configuration (becomes A^T)
+  // B matrix configuration (becomes A^T with ColumnMajor)
   using ElementB = ElementType;
-  using LayoutB = cutlass::layout::RowMajor;  // Transposed
+  using LayoutB = cutlass::layout::ColumnMajor;  // A^T layout (RowMajor transposed)
   static constexpr int AlignmentB = 128 / cutlass::sizeof_bits<ElementB>::value;
 
-  // C/D matrix configuration (transposed)
+  // C/D matrix configuration (transposed output)
   using ElementC = void;
   using LayoutC = cutlass::layout::ColumnMajor;  // Transposed
   static constexpr int AlignmentC = 128 / cutlass::sizeof_bits<OutElementType>::value;
