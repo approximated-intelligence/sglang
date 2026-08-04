@@ -91,7 +91,7 @@ class ModernBertAttention(nn.Module):
             config.hidden_size, 3 * self.all_head_size, bias=config.attention_bias
         )
         self.Wo = nn.Linear(
-            config.hidden_size, config.hidden_size, bias=config.decoder_bias
+            config.hidden_size, config.hidden_size, bias=config.attention_bias
         )
         self.dropout = nn.Dropout(config.attention_dropout)
 
