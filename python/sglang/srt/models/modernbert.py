@@ -117,7 +117,7 @@ class ModernBertAttention(nn.Module):
             base=rope_theta,
         )
 
-        sliding_window_size = None if is_global else config.local_attention // 2
+        sliding_window_size = None if is_global else (config.local_attention // 2) + 1
 
         self.attn = RadixAttention(
             num_heads=self.num_heads,
