@@ -261,6 +261,16 @@ class ModernBertBaseModel(nn.Module):
         get_embedding: bool = False,
     ) -> torch.Tensor:
         assert get_embedding
+
+        # Fail fast if Radix Cache or Chunked Prefill is active.
+        # Both features populate extend_prefix_lens > 0, which breaks bidirectional context.
+        if forward_batch.extend_prefix_lens is not None:
+            assert torch.all(forward_batch.extend_prefix_lens == 0), (
+                "ModernBERT received a request with a cached prefix (extend_prefix_lens > 0). "
+                "Encoder models require the full sequence to be processed in one forward pass. "
+                "Please restart SGLang with `--disable-radix-cache` and `--chunked-prefill-size -1`."
+            )
+
         hidden_states = (
             self.embeddings(input_ids) if input_embeds is None else input_embeds
         )
