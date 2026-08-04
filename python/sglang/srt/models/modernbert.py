@@ -165,7 +165,7 @@ class ModernBertMLP(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         input_, gate = self.Wi(hidden_states).chunk(2, dim=-1)
-        return self.dropout(self.Wo(self.act(gate) * input_))
+        return self.dropout(self.Wo(self.act(input_) * gate))
 
 
 class ModernBertEncoderLayer(nn.Module):
