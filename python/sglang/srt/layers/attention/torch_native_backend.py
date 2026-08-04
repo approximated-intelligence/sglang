@@ -332,7 +332,7 @@ class TorchNativeAttnBackend(AttentionBackend):
             is_cross_attn=layer.is_cross_attention,
             sliding_window_size=(
                 layer.sliding_window_size
-                and not layer.is_cross_attention
+                if not layer.is_cross_attention
                 and layer.sliding_window_size is not None
                 and layer.sliding_window_size > -1
                 else None
