@@ -1371,6 +1371,16 @@ class FlashInferAttnBackend(AttentionBackend):
                 not layer.is_cross_attention
                 and layer.attn_type != AttentionType.ENCODER_ONLY
             )
+            # For causal decoders, window_right is 0 (cannot attend to the future).
+            # For bidirectional encoders, window_right matches window_left.
+            window_right = 0 if causal else (
+                layer.sliding_window_size
+                if not (
+                    self.forward_metadata.multi_item_params
+                    and self.forward_metadata.multi_item_params.is_enabled()
+                )
+                else -1
+            )
             o = prefill_wrapper_paged.forward(
                 q.view(-1, layer.tp_q_head_num, layer.head_dim),
                 kv_cache,
@@ -1390,6 +1400,7 @@ class FlashInferAttnBackend(AttentionBackend):
                     )
                     else -1
                 ),
+                window_right=window_right,
                 logits_soft_cap=logits_soft_cap,
                 # Must use _float to avoid device-to-host copy that breaks cuda graph capture.
                 k_scale=layer.k_scale_float,
@@ -1429,6 +1440,16 @@ class FlashInferAttnBackend(AttentionBackend):
                 )
 
             else:
+                # For causal decoders, window_right is 0 (cannot attend to the future).
+                # For bidirectional encoders, window_right matches window_left.
+                swa_window_right = 0 if causal else (
+                    layer.sliding_window_size
+                    if not (
+                        self.forward_metadata.multi_item_params
+                        and self.forward_metadata.multi_item_params.is_enabled()
+                    )
+                    else -1
+                )
                 swa_window_left = (
                     layer.sliding_window_size
                     if not (
@@ -1444,6 +1465,7 @@ class FlashInferAttnBackend(AttentionBackend):
                     causal=causal,
                     sm_scale=layer.scaling,
                     window_left=swa_window_left,
+                    window_right=swa_window_right,
                     logits_soft_cap=logits_soft_cap,
                 )
                 o2, s2 = prefill_wrapper_paged.forward_return_lse(
@@ -1452,6 +1474,7 @@ class FlashInferAttnBackend(AttentionBackend):
                     causal=False,
                     sm_scale=layer.scaling,
                     window_left=swa_window_left,
+                    window_right=swa_window_right,
                     logits_soft_cap=logits_soft_cap,
                     # Must use _float to avoid device-to-host copy that breaks cuda graph capture.
                     k_scale=layer.k_scale_float,
