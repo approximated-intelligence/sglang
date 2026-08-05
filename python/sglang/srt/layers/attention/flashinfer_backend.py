@@ -1297,15 +1297,23 @@ class FlashInferAttnBackend(AttentionBackend):
                 not layer.is_cross_attention
                 and layer.attn_type != AttentionType.ENCODER_ONLY
             )
-            # For causal decoders, window_right is 0 (cannot attend to the future).
-            # For bidirectional encoders, window_right matches window_left.
-            window_right = 0 if causal else (
-                layer.sliding_window_size
-                if not (
+            
+            # FlashInfer's `window_left` only masks the past (left side).
+            # For bidirectional encoders, it leaves the right side unbounded.
+            # We generate a custom bidirectional mask to work around this API limitation.
+            custom_mask = (
+                self._build_bidirectional_swa_mask(
+                    self.forward_metadata.qo_indptr[0],
+                    self.forward_metadata.kv_indptr[0],
+                    layer.sliding_window_size,
+                    q.device,
+                )
+                if not causal and layer.sliding_window_size is not None and layer.sliding_window_size > -1
+                and not (
                     self.forward_metadata.multi_item_params
                     and self.forward_metadata.multi_item_params.is_enabled()
                 )
-                else -1
+                else None
             )
             o = prefill_wrapper_paged.forward(
                 q.view(-1, layer.tp_q_head_num, layer.head_dim),
@@ -1326,7 +1334,7 @@ class FlashInferAttnBackend(AttentionBackend):
                     )
                     else -1
                 ),
-                window_right=window_right,
+                custom_mask=custom_mask,
                 logits_soft_cap=logits_soft_cap,
                 # Must use _float to avoid device-to-host copy that breaks cuda graph capture.
                 k_scale=layer.k_scale_float,
@@ -1366,16 +1374,6 @@ class FlashInferAttnBackend(AttentionBackend):
                 )
 
             else:
-                # For causal decoders, window_right is 0 (cannot attend to the future).
-                # For bidirectional encoders, window_right matches window_left.
-                swa_window_right = 0 if causal else (
-                    layer.sliding_window_size
-                    if not (
-                        self.forward_metadata.multi_item_params
-                        and self.forward_metadata.multi_item_params.is_enabled()
-                    )
-                    else -1
-                )
                 swa_window_left = (
                     layer.sliding_window_size
                     if not (
@@ -1384,6 +1382,23 @@ class FlashInferAttnBackend(AttentionBackend):
                     )
                     else -1
                 )
+                # FlashInfer's `window_left` only masks the past (left side).
+                # For bidirectional encoders, it leaves the right side unbounded.
+                # We generate a custom bidirectional mask to work around this API limitation.
+                custom_mask = (
+                    self._build_bidirectional_swa_mask(
+                        self.forward_metadata.qo_indptr[0],
+                        self.forward_metadata.kv_indptr[0],
+                        layer.sliding_window_size,
+                        q.device,
+                    )
+                    if not causal and layer.sliding_window_size is not None and layer.sliding_window_size > -1
+                    and not (
+                        self.forward_metadata.multi_item_params
+                        and self.forward_metadata.multi_item_params.is_enabled()
+                    )
+                    else None
+                )
                 o1, s1 = self.prefill_wrapper_ragged.forward_return_lse(
                     q.view(-1, layer.tp_q_head_num, layer.head_dim),
                     k.view(-1, layer.tp_k_head_num, layer.head_dim),
@@ -1391,7 +1406,7 @@ class FlashInferAttnBackend(AttentionBackend):
                     causal=causal,
                     sm_scale=layer.scaling,
                     window_left=swa_window_left,
-                    window_right=swa_window_right,
+                    custom_mask=custom_mask,
                     logits_soft_cap=logits_soft_cap,
                 )
                 o2, s2 = prefill_wrapper_paged.forward_return_lse(
@@ -1400,7 +1415,7 @@ class FlashInferAttnBackend(AttentionBackend):
                     causal=False,
                     sm_scale=layer.scaling,
                     window_left=swa_window_left,
-                    window_right=swa_window_right,
+                    custom_mask=custom_mask,
                     logits_soft_cap=logits_soft_cap,
                 )
 
@@ -1416,6 +1431,40 @@ class FlashInferAttnBackend(AttentionBackend):
                 )
 
         return o.view(-1, layer.tp_q_head_num * layer.head_dim)
+
+    @staticmethod
+    def _build_bidirectional_swa_mask(
+        qo_indptr: torch.Tensor,
+        kv_indptr: torch.Tensor,
+        window_size: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Generates a bidirectional sliding window custom mask for FlashInfer."""
+        bs = len(qo_indptr) - 1
+        total_q_len = int(qo_indptr[-1].item())
+        total_kv_len = int(kv_indptr[-1].item())
+        
+        # FlashInfer expects custom_mask as a 1D flattened tensor of uint8
+        mask = torch.zeros((total_q_len, total_kv_len), dtype=torch.uint8, device=device)
+        
+        for i in range(bs):
+            q_start = int(qo_indptr[i].item())
+            q_end = int(qo_indptr[i+1].item())
+            kv_start = int(kv_indptr[i].item())
+            kv_end = int(kv_indptr[i+1].item())
+            
+            q_len = q_end - q_start
+            kv_len = kv_end - kv_start
+            
+            # Generate 2D absolute positions for this sequence
+            q_pos = torch.arange(q_len, device=device).unsqueeze(1)
+            k_pos = torch.arange(kv_len, device=device).unsqueeze(0)
+            
+            # Bidirectional window: absolute distance must be <= window_size
+            seq_mask = (torch.abs(q_pos - k_pos) <= window_size).to(torch.uint8)
+            mask[q_start:q_end, kv_start:kv_end] = seq_mask
+            
+        return mask.view(-1)
 
     @debug_kernel_api
     def forward_decode(
