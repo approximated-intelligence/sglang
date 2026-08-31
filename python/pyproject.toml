@@ -33,7 +33,7 @@ dependencies = [
   "einops",
   "fastapi",
   "flash-attn-4>=4.0.0b18",
-  "flashinfer_python[cu13]==0.6.18", # keep it aligned with jit-cache version in Dockerfile
+  "flashinfer_python[cu13]",
   "gguf",
   "humming-kernels[cu13]==0.1.12",
   "interegular",
@@ -93,6 +93,9 @@ dependencies = [
   "xxhash",
   "zstandard",
 ]
+
+[tool.uv.sources]
+flashinfer-python = { path = "../../flashinfer", editable = true }
 
 [[tool.uv.index]]
 name = "pypi"
