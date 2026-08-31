@@ -1373,13 +1373,17 @@ class FlashInferAttnBackend(AttentionBackend):
             )
             # For causal decoders, window_right is 0 (cannot attend to the future).
             # For bidirectional encoders, window_right matches window_left.
-            window_right = 0 if causal else (
-                layer.sliding_window_size
-                if not (
-                    self.forward_metadata.multi_item_params
-                    and self.forward_metadata.multi_item_params.is_enabled()
+            window_right = (
+                0
+                if causal
+                else (
+                    layer.sliding_window_size
+                    if not (
+                        self.forward_metadata.multi_item_params
+                        and self.forward_metadata.multi_item_params.is_enabled()
+                    )
+                    else -1
                 )
-                else -1
             )
             o = prefill_wrapper_paged.forward(
                 q.view(-1, layer.tp_q_head_num, layer.head_dim),
@@ -1442,13 +1446,17 @@ class FlashInferAttnBackend(AttentionBackend):
             else:
                 # For causal decoders, window_right is 0 (cannot attend to the future).
                 # For bidirectional encoders, window_right matches window_left.
-                swa_window_right = 0 if causal else (
-                    layer.sliding_window_size
-                    if not (
-                        self.forward_metadata.multi_item_params
-                        and self.forward_metadata.multi_item_params.is_enabled()
+                swa_window_right = (
+                    0
+                    if causal
+                    else (
+                        layer.sliding_window_size
+                        if not (
+                            self.forward_metadata.multi_item_params
+                            and self.forward_metadata.multi_item_params.is_enabled()
+                        )
+                        else -1
                     )
-                    else -1
                 )
                 swa_window_left = (
                     layer.sliding_window_size
