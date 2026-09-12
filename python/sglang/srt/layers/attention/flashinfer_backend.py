@@ -1366,7 +1366,7 @@ class FlashInferAttnBackend(AttentionBackend):
                     )
                     else -1
                 ),
-                # For causal decoders, window_right is 0 (cannot attend to the future).
+                # For causal decoders, window_right is -1 (cannot attend to the future).
                 # For bidirectional encoders, window_right matches window_left.
                 window_right=(
                     -1
@@ -1405,6 +1405,29 @@ class FlashInferAttnBackend(AttentionBackend):
             if not self.is_dllm_model and layer.attn_type == AttentionType.ENCODER_ONLY:
                 save_kv_cache = False
 
+            window_left = (
+                layer.sliding_window_size
+                if not (
+                    self.forward_metadata.multi_item_params
+                    and self.forward_metadata.multi_item_params.is_enabled()
+                )
+                else -1
+            )
+            # For causal decoders, window_right is -1 (cannot attend to the future).
+            # For bidirectional encoders, window_right matches window_left.
+            window_right = (
+                -1
+                if causal
+                else (
+                    layer.sliding_window_size
+                    if not (
+                        self.forward_metadata.multi_item_params
+                        and self.forward_metadata.multi_item_params.is_enabled()
+                    )
+                    else -1
+                )
+            )
+
             if self.forward_metadata.extend_no_prefix:
                 # NOTE: FlashInfer currently has limitations with head_dim = 32 or other dimensions
                 # The FlashInfer head_dim limitation itself is tracked here:
@@ -1419,36 +1442,14 @@ class FlashInferAttnBackend(AttentionBackend):
                 )
 
             else:
-                swa_window_left = (
-                    layer.sliding_window_size
-                    if not (
-                        self.forward_metadata.multi_item_params
-                        and self.forward_metadata.multi_item_params.is_enabled()
-                    )
-                    else -1
-                )
-                # For causal decoders, window_right is -1 (cannot attend to the future).
-                # For bidirectional encoders, window_right matches window_left.
-                swa_window_right = (
-                    -1
-                    if causal
-                    else (
-                        layer.sliding_window_size
-                        if not (
-                            self.forward_metadata.multi_item_params
-                            and self.forward_metadata.multi_item_params.is_enabled()
-                        )
-                        else -1
-                    )
-                )
                 o1, s1 = self.prefill_wrapper_ragged.forward_return_lse(
                     q.view(-1, layer.tp_q_head_num, layer.head_dim),
                     k.view(-1, layer.tp_k_head_num, layer.head_dim),
                     v.view(-1, layer.tp_v_head_num, layer.head_dim),
                     causal=causal,
                     sm_scale=layer.scaling,
-                    window_left=swa_window_left,
-                    window_right=swa_window_right,
+                    window_left=window_left,
+                    window_right=window_right,
                     logits_soft_cap=logits_soft_cap,
                 )
                 o2, s2 = prefill_wrapper_paged.forward_return_lse(
@@ -1456,8 +1457,8 @@ class FlashInferAttnBackend(AttentionBackend):
                     kv_cache,
                     causal=False,
                     sm_scale=layer.scaling,
-                    window_left=swa_window_left,
-                    window_right=swa_window_right,
+                    window_left=window_left,
+                    window_right=window_right,
                     logits_soft_cap=logits_soft_cap,
                     # Must use _float to avoid device-to-host copy that breaks cuda graph capture.
                     k_scale=layer.k_scale_float,
