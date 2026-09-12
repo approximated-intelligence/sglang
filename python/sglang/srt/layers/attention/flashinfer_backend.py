@@ -1438,6 +1438,9 @@ class FlashInferAttnBackend(AttentionBackend):
                     v.view(-1, layer.tp_v_head_num, layer.head_dim),
                     causal=causal,
                     sm_scale=layer.scaling,
+                    # causal layers keep the unwindowed call they had on this path
+                    window_left=window_left,
+                    window_right=window_right,
                     logits_soft_cap=logits_soft_cap,
                 )
 
